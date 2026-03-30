@@ -1,1 +1,1 @@
-# Sign-Language Machine Learning Model
+# Sign Language Machine Learning Model
