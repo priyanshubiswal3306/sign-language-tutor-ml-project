@@ -10,10 +10,10 @@ if __name__ == "__main__":
     predictor = Predictor(class_names)
 
     # 🔹 Choose any class folder (change if you want)
-    class_folder = "data/asl_alphabet_train/Q"
+    class_folder = "data/asl_alphabet_train/B"
 
     # 🔹 Automatically pick first image
-    image_name = os.listdir(class_folder)[105]
+    image_name = os.listdir(class_folder)[115]
     image_path = os.path.join(class_folder, image_name)
 
     print(f"\nTesting on image: {image_path}")

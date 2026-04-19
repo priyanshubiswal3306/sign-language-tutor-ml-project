@@ -5,21 +5,27 @@ import os
 
 # Setup MediaPipe
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(max_num_hands=1)
+hands = mp_hands.Hands(
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.7
+)
+
 mp_draw = mp.solutions.drawing_utils
 
-# Create data folder
+# Create directory
 os.makedirs("data/landmarks", exist_ok=True)
 
-# Ask user for label
+# Input label
 label = input("Enter label (A, B, C...): ").upper()
-
 file_path = f"data/landmarks/{label}.csv"
 
 cap = cv2.VideoCapture(0)
 
 print(f"\nCollecting data for: {label}")
-print("Press 's' to save frame | 'q' to quit\n")
+print("Press 'S' to save | 'Q' to quit\n")
+
+sample_count = 0
 
 with open(file_path, mode='a', newline='') as f:
     writer = csv.writer(f)
@@ -37,21 +43,32 @@ with open(file_path, mode='a', newline='') as f:
 
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-                # Extract 21 landmarks
+                # Draw landmarks
+                mp_draw.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    mp_hands.HAND_CONNECTIONS
+                )
+
+                # Extract features
                 row = []
                 for lm in hand_landmarks.landmark:
                     row.extend([lm.x, lm.y, lm.z])
 
-                # Save on key press
                 key = cv2.waitKey(1)
+
                 if key == ord('s'):
                     writer.writerow(row)
-                    print("Saved sample")
+                    sample_count += 1
+                    print(f"Saved sample {sample_count}")
 
-        cv2.putText(frame, f"Label: {label}", (20, 50),
+        # Display info
+        cv2.putText(frame, f"Label: {label}", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+
+        cv2.putText(frame, f"Samples: {sample_count}", (20, 80),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255,255,0), 2)
 
         cv2.imshow("Collect Landmarks", frame)
 
