@@ -4,8 +4,17 @@ import tensorflow as tf
 import mediapipe as mp
 import random
 import time
+import pyttsx3
 
 from src.utils.landmark_normalizer import normalize_landmarks
+
+# 🔊 Initialize voice engine
+engine = pyttsx3.init()
+engine.setProperty('rate', 150)  # speed
+
+def speak(text):
+    engine.say(text)
+    engine.runAndWait()
 
 # Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
@@ -33,9 +42,16 @@ total = 0
 
 # 🔥 Cooldown
 last_action_time = 0
-COOLDOWN = 2  # seconds
+COOLDOWN = 2
+
+# 🔊 Voice control (avoid repeat speaking)
+last_spoken_time = 0
+VOICE_COOLDOWN = 2
 
 cap = cv2.VideoCapture(0)
+
+# Speak first target
+speak(f"Show {target}")
 
 while True:
     ret, frame = cap.read()
@@ -85,7 +101,7 @@ while True:
 
     result_text = "Show the sign"
 
-    # 🔥 Apply cooldown
+    # 🔥 Cooldown logic
     if current_time - last_action_time > COOLDOWN:
 
         if stable_count > REQUIRED_STABLE and confidence > 0.7:
@@ -95,13 +111,27 @@ while True:
             if stable_label == target:
                 result_text = "Correct ✅"
                 score += 1
+
+                if current_time - last_spoken_time > VOICE_COOLDOWN:
+                    speak("Correct")
+                    last_spoken_time = current_time
+
             else:
                 result_text = "Try Again ❌"
 
-            # 🔥 Reset for next round
+                if current_time - last_spoken_time > VOICE_COOLDOWN:
+                    speak("Try again")
+                    last_spoken_time = current_time
+
+            # New target
             target = random.choice(labels)
             stable_count = 0
-            last_action_time = current_time  # start cooldown
+            last_action_time = current_time
+
+            # 🔊 Speak next target
+            if current_time - last_spoken_time > VOICE_COOLDOWN:
+                speak(f"Show {target}")
+                last_spoken_time = current_time
 
     else:
         result_text = "Wait..."
@@ -122,7 +152,7 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1, (0,255,255), 2)
 
-    cv2.imshow("Learning Mode", frame)
+    cv2.imshow("Learning Mode (Voice Enabled)", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
