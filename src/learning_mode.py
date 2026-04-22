@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow as tf
 import mediapipe as mp
 import random
+import time
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
@@ -30,6 +31,10 @@ target = random.choice(labels)
 score = 0
 total = 0
 
+# 🔥 Cooldown
+last_action_time = 0
+COOLDOWN = 2  # seconds
+
 cap = cv2.VideoCapture(0)
 
 while True:
@@ -44,6 +49,8 @@ while True:
 
     label = ""
     confidence = 0
+
+    current_time = time.time()
 
     if results.multi_hand_landmarks:
         for hand_landmarks, hand_info in zip(
@@ -78,19 +85,26 @@ while True:
 
     result_text = "Show the sign"
 
-    if stable_count > REQUIRED_STABLE and confidence > 0.7:
+    # 🔥 Apply cooldown
+    if current_time - last_action_time > COOLDOWN:
 
-        total += 1
+        if stable_count > REQUIRED_STABLE and confidence > 0.7:
 
-        if stable_label == target:
-            result_text = "Correct ✅"
-            score += 1
-        else:
-            result_text = "Try Again ❌"
+            total += 1
 
-        # New target
-        target = random.choice(labels)
-        stable_count = 0
+            if stable_label == target:
+                result_text = "Correct ✅"
+                score += 1
+            else:
+                result_text = "Try Again ❌"
+
+            # 🔥 Reset for next round
+            target = random.choice(labels)
+            stable_count = 0
+            last_action_time = current_time  # start cooldown
+
+    else:
+        result_text = "Wait..."
 
     # Display
     cv2.putText(frame, f"Target: {target}",
