@@ -1,4 +1,8 @@
 pandas
 numpy
 seaborn
+streamlit
+opencv-python
+mediapipe
+tensorflow
 -e .
