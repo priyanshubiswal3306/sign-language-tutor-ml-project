@@ -12,12 +12,14 @@ from src.utils.landmark_normalizer import normalize_landmarks
 
 # ================= VOICE ================= #
 
-engine = pyttsx3.init(driverName='sapi5')
-engine.setProperty('rate', 150)
 
 speech_queue = queue.Queue()
 
 def speech_worker():
+    # 🔥 FIX: Initialize the engine INSIDE the thread
+    engine = pyttsx3.init(driverName='sapi5')
+    engine.setProperty('rate', 150)
+    
     while True:
         text = speech_queue.get()
         if text is None:
@@ -26,6 +28,7 @@ def speech_worker():
         engine.say(text)
         engine.runAndWait()
 
+# Start the daemon thread
 threading.Thread(target=speech_worker, daemon=True).start()
 
 def speak(text):
