@@ -19,10 +19,14 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# Stability
+# 🔥 Stability
 stable_label = ""
 stable_count = 0
 REQUIRED_STABLE = 7
+
+# 🔥 Word system
+sentence = ""
+last_added = ""
 
 cap = cv2.VideoCapture(0)
 
@@ -53,7 +57,6 @@ while True:
                 mp_hands.HAND_CONNECTIONS
             )
 
-            # Extract landmarks
             row = []
             for lm in hand_landmarks.landmark:
                 row.extend([lm.x, lm.y, lm.z])
@@ -68,27 +71,53 @@ while True:
 
                 label = labels[class_index]
 
-    # Stability logic
+    # 🔥 Stability logic
     if label == stable_label:
         stable_count += 1
     else:
         stable_label = label
         stable_count = 1
 
+    # 🔥 Accept letter only when stable
     if stable_count > REQUIRED_STABLE and confidence > 0.7:
-        display_text = f"{stable_label} ({confidence:.2f})"
+        display_text = stable_label
+
+        # 🔥 Add to sentence (avoid repeats)
+        if stable_label != last_added:
+            sentence += stable_label
+            last_added = stable_label
     else:
         display_text = "Detecting..."
 
-    cv2.putText(frame, display_text,
+    # 🎮 Keyboard controls
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord(' '):  # SPACE
+        sentence += " "
+        last_added = ""
+
+    elif key == 8:  # BACKSPACE
+        sentence = sentence[:-1]
+
+    elif key == ord('c'):  # CLEAR
+        sentence = ""
+        last_added = ""
+
+    elif key == ord('q'):  # QUIT
+        break
+
+    # 🔥 Display
+    cv2.putText(frame, f"Letter: {display_text}",
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1, (0, 255, 0), 2)
 
-    cv2.imshow("Landmark Detection (Robust)", frame)
+    cv2.putText(frame, f"Text: {sentence}",
+                (20, 100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1, (255, 255, 0), 2)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+    cv2.imshow("Sign Language Tutor", frame)
 
 cap.release()
 cv2.destroyAllWindows()
