@@ -7,11 +7,13 @@ import time
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
-# Load model
+# ================= LOAD MODEL ================= #
+
 model = tf.keras.models.load_model("models/landmark_model.keras")
 labels = np.load("models/landmark_labels.npy")
 
-# MediaPipe
+# ================= MEDIAPIPE ================= #
+
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     max_num_hands=1,
@@ -21,21 +23,31 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# Stability
+# ================= SETTINGS ================= #
+
+REQUIRED_STABLE = 7
+COOLDOWN = 2
+MAX_QUESTIONS = 30
+
+# ================= VARIABLES ================= #
+
 stable_label = ""
 stable_count = 0
-REQUIRED_STABLE = 7
 
-# Learning system
 target = random.choice(labels)
+
 score = 0
 total = 0
 
-# Cooldown
 last_action_time = 0
-COOLDOWN = 2  # seconds
+
+quiz_active = True
+
+# ================= CAMERA ================= #
 
 cap = cv2.VideoCapture(0)
+
+# ================= LOOP ================= #
 
 while True:
     ret, frame = cap.read()
@@ -57,10 +69,13 @@ while True:
             results.multi_hand_landmarks,
             results.multi_handedness
         ):
-            hand_label = hand_info.classification[0].label
-            is_left = (hand_label == "Left")
+            is_left = (hand_info.classification[0].label == "Left")
 
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            mp_draw.draw_landmarks(
+                frame,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS
+            )
 
             row = []
             for lm in hand_landmarks.landmark:
@@ -76,7 +91,8 @@ while True:
 
                 label = labels[class_index]
 
-    # Stability logic
+    # ================= STABILITY ================= #
+
     if label == stable_label:
         stable_count += 1
     else:
@@ -85,28 +101,40 @@ while True:
 
     result_text = "Show the sign"
 
-    # Cooldown logic
-    if current_time - last_action_time > COOLDOWN:
+    # ================= QUIZ LOGIC ================= #
 
-        if stable_count > REQUIRED_STABLE and confidence > 0.7:
+    if quiz_active:
 
-            total += 1
+        if current_time - last_action_time > COOLDOWN:
 
-            if stable_label == target:
-                result_text = "Correct ✅"
-                score += 1
-            else:
-                result_text = "Try Again ❌"
+            if stable_count > REQUIRED_STABLE and confidence > 0.7:
 
-            # New target
-            target = random.choice(labels)
-            stable_count = 0
-            last_action_time = current_time
+                total += 1
+
+                if stable_label == target:
+                    result_text = "Correct ✅"
+                    score += 1
+                else:
+                    result_text = "Try Again ❌"
+
+                # New target
+                target = random.choice(labels)
+
+                stable_count = 0
+                last_action_time = current_time
+
+                # End quiz
+                if total >= MAX_QUESTIONS:
+                    quiz_active = False
+
+        else:
+            result_text = "Wait..."
 
     else:
-        result_text = "Wait..."
+        result_text = "QUIZ COMPLETE"
 
-    # Display
+    # ================= DISPLAY ================= #
+
     cv2.putText(frame, f"Target: {target}",
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -122,10 +150,46 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1, (0,255,255), 2)
 
-    cv2.imshow("Learning Mode", frame)
+    # ================= FINAL RESULT ================= #
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    if not quiz_active:
+        accuracy = (score / total) * 100 if total > 0 else 0
+
+        cv2.putText(frame, "QUIZ COMPLETE",
+                    (20, 200),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0,255,0), 2)
+
+        cv2.putText(frame, f"Final Score: {score}/{total}",
+                    (20, 250),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (255,255,0), 2)
+
+        cv2.putText(frame, f"Accuracy: {accuracy:.2f}%",
+                    (20, 300),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (255,255,0), 2)
+
+        cv2.putText(frame, "Press R to Restart",
+                    (20, 350),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1, (0,255,255), 2)
+
+    # ================= CONTROLS ================= #
+
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord('q'):
         break
+
+    if key == ord('r') and not quiz_active:
+        # Restart quiz
+        score = 0
+        total = 0
+        quiz_active = True
+        target = random.choice(labels)
+
+    cv2.imshow("Learning Mode (Quiz)", frame)
 
 cap.release()
 cv2.destroyAllWindows()
