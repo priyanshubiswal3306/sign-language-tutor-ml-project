@@ -7,7 +7,7 @@ import mediapipe as mp
 model = tf.keras.models.load_model("models/landmark_model.keras")
 labels = np.load("models/landmark_labels.npy")
 
-# MediaPipe
+# MediaPipe setup
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     max_num_hands=1,
@@ -17,9 +17,10 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# Smoothing buffer
-pred_buffer = []
-BUFFER_SIZE = 5
+# 🔥 Stability variables
+stable_label = ""
+stable_count = 0
+REQUIRED_STABLE = 7  # Increase for more stability
 
 cap = cv2.VideoCapture(0)
 
@@ -29,7 +30,6 @@ while True:
         break
 
     frame = cv2.flip(frame, 1)
-    h, w, _ = frame.shape
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb)
@@ -41,7 +41,11 @@ while True:
         for hand_landmarks in results.multi_hand_landmarks:
 
             # Draw landmarks
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            mp_draw.draw_landmarks(
+                frame,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS
+            )
 
             # Extract 63 features
             row = []
@@ -55,26 +59,30 @@ while True:
                 class_index = np.argmax(preds)
                 confidence = np.max(preds)
 
-                # Buffer smoothing
-                pred_buffer.append(class_index)
-                if len(pred_buffer) > BUFFER_SIZE:
-                    pred_buffer.pop(0)
+                label = labels[class_index]
 
-                final_index = max(set(pred_buffer), key=pred_buffer.count)
-                label = labels[final_index]
-
-    # Confidence threshold
-    if confidence > 0.7:
-        text = f"{label} ({confidence:.2f})"
+    # 🔥 Stability logic (debounce)
+    if label == stable_label:
+        stable_count += 1
     else:
-        text = "Detecting..."
+        stable_label = label
+        stable_count = 1
 
-    cv2.putText(frame, text, (20, 50),
+    # 🔥 Final output logic
+    if stable_count > REQUIRED_STABLE and confidence > 0.7:
+        display_text = f"{stable_label} ({confidence:.2f})"
+    else:
+        display_text = "Detecting..."
+
+    # Display text
+    cv2.putText(frame, display_text,
+                (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (0,255,0), 2)
+                1, (0, 255, 0), 2)
 
-    cv2.imshow("Landmark Sign Detection", frame)
+    cv2.imshow("Landmark Sign Detection (Stable)", frame)
 
+    # Exit on Q
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
