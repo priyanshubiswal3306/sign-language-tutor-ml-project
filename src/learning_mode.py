@@ -15,18 +15,24 @@ engine.setProperty('rate', 150)
 engine.setProperty('volume', 1.0)
 
 speech_queue = queue.Queue()
+is_speaking = False
 
 def speak(text):
-    # Only queue if empty (prevents spam)
-    if speech_queue.empty():
-        speech_queue.put(text)
+    speech_queue.put(text)
 
 def process_speech():
-    if not speech_queue.empty():
+    global is_speaking
+
+    if not speech_queue.empty() and not is_speaking:
+        is_speaking = True
         text = speech_queue.get()
         print("Speaking:", text)
+
         engine.say(text)
         engine.runAndWait()
+
+        is_speaking = False
+
 
 # Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
@@ -58,7 +64,7 @@ COOLDOWN = 2  # seconds
 
 cap = cv2.VideoCapture(0)
 
-# 🔊 Speak first instruction
+# 🔊 First instruction
 speak(f"Show {target}")
 
 while True:
@@ -133,7 +139,6 @@ while True:
             stable_count = 0
             last_action_time = current_time
 
-            # 🔊 Speak next target
             speak(f"Show {target}")
 
     else:
