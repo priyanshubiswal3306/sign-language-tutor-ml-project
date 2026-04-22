@@ -5,16 +5,22 @@ import mediapipe as mp
 import random
 import time
 import pyttsx3
+import threading
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
 # 🔊 Initialize voice engine
-engine = pyttsx3.init()
-engine.setProperty('rate', 150)  # speed
+engine = pyttsx3.init(driverName='sapi5')
+engine.setProperty('rate', 150)
+engine.setProperty('volume', 1.0)
 
-def speak(text):
-    engine.say(text)
-    engine.runAndWait()
+def speak_async(text):
+    def run():
+        print("Speaking:", text)  # Debug
+        engine.say(text)
+        engine.runAndWait()
+    threading.Thread(target=run, daemon=True).start()
+
 
 # Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
@@ -30,28 +36,28 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# Stability
+# 🔥 Stability
 stable_label = ""
 stable_count = 0
 REQUIRED_STABLE = 7
 
-# Learning system
+# 🔥 Learning system
 target = random.choice(labels)
 score = 0
 total = 0
 
 # 🔥 Cooldown
 last_action_time = 0
-COOLDOWN = 2
+COOLDOWN = 2  # seconds
 
-# 🔊 Voice control (avoid repeat speaking)
+# 🔊 Voice cooldown (avoid spam)
 last_spoken_time = 0
 VOICE_COOLDOWN = 2
 
 cap = cv2.VideoCapture(0)
 
-# Speak first target
-speak(f"Show {target}")
+# Speak first instruction
+speak_async(f"Show {target}")
 
 while True:
     ret, frame = cap.read()
@@ -76,7 +82,11 @@ while True:
             hand_label = hand_info.classification[0].label
             is_left = (hand_label == "Left")
 
-            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            mp_draw.draw_landmarks(
+                frame,
+                hand_landmarks,
+                mp_hands.HAND_CONNECTIONS
+            )
 
             row = []
             for lm in hand_landmarks.landmark:
@@ -92,7 +102,7 @@ while True:
 
                 label = labels[class_index]
 
-    # Stability
+    # 🔥 Stability logic
     if label == stable_label:
         stable_count += 1
     else:
@@ -113,44 +123,44 @@ while True:
                 score += 1
 
                 if current_time - last_spoken_time > VOICE_COOLDOWN:
-                    speak("Correct")
+                    speak_async("Correct")
                     last_spoken_time = current_time
 
             else:
                 result_text = "Try Again ❌"
 
                 if current_time - last_spoken_time > VOICE_COOLDOWN:
-                    speak("Try again")
+                    speak_async("Try again")
                     last_spoken_time = current_time
 
-            # New target
+            # 🔥 New target
             target = random.choice(labels)
             stable_count = 0
             last_action_time = current_time
 
             # 🔊 Speak next target
             if current_time - last_spoken_time > VOICE_COOLDOWN:
-                speak(f"Show {target}")
+                speak_async(f"Show {target}")
                 last_spoken_time = current_time
 
     else:
         result_text = "Wait..."
 
-    # Display
+    # 🔥 Display
     cv2.putText(frame, f"Target: {target}",
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (0,255,0), 2)
+                1, (0, 255, 0), 2)
 
     cv2.putText(frame, result_text,
                 (20, 100),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (255,255,0), 2)
+                1, (255, 255, 0), 2)
 
     cv2.putText(frame, f"Score: {score}/{total}",
                 (20, 150),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (0,255,255), 2)
+                1, (0, 255, 255), 2)
 
     cv2.imshow("Learning Mode (Voice Enabled)", frame)
 
