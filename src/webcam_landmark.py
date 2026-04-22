@@ -3,11 +3,13 @@ import numpy as np
 import tensorflow as tf
 import mediapipe as mp
 
-# Load model + labels
+from src.utils.landmark_normalizer import normalize_landmarks
+
+# Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
 labels = np.load("models/landmark_labels.npy")
 
-# MediaPipe setup
+# MediaPipe
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     max_num_hands=1,
@@ -17,10 +19,10 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# 🔥 Stability variables
+# Stability
 stable_label = ""
 stable_count = 0
-REQUIRED_STABLE = 7  # Increase for more stability
+REQUIRED_STABLE = 7
 
 cap = cv2.VideoCapture(0)
 
@@ -38,22 +40,27 @@ while True:
     confidence = 0
 
     if results.multi_hand_landmarks:
-        for hand_landmarks in results.multi_hand_landmarks:
+        for hand_landmarks, hand_info in zip(
+            results.multi_hand_landmarks,
+            results.multi_handedness
+        ):
+            hand_label = hand_info.classification[0].label
+            is_left = (hand_label == "Left")
 
-            # Draw landmarks
             mp_draw.draw_landmarks(
                 frame,
                 hand_landmarks,
                 mp_hands.HAND_CONNECTIONS
             )
 
-            # Extract 63 features
+            # Extract landmarks
             row = []
             for lm in hand_landmarks.landmark:
                 row.extend([lm.x, lm.y, lm.z])
 
             if len(row) == 63:
-                data = np.array(row).reshape(1, -1)
+                normalized = normalize_landmarks(row, is_left_hand=is_left)
+                data = np.array(normalized).reshape(1, -1)
 
                 preds = model.predict(data, verbose=0)
                 class_index = np.argmax(preds)
@@ -61,28 +68,25 @@ while True:
 
                 label = labels[class_index]
 
-    # 🔥 Stability logic (debounce)
+    # Stability logic
     if label == stable_label:
         stable_count += 1
     else:
         stable_label = label
         stable_count = 1
 
-    # 🔥 Final output logic
     if stable_count > REQUIRED_STABLE and confidence > 0.7:
         display_text = f"{stable_label} ({confidence:.2f})"
     else:
         display_text = "Detecting..."
 
-    # Display text
     cv2.putText(frame, display_text,
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1, (0, 255, 0), 2)
 
-    cv2.imshow("Landmark Sign Detection (Stable)", frame)
+    cv2.imshow("Landmark Detection (Robust)", frame)
 
-    # Exit on Q
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
