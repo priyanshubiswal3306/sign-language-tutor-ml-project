@@ -5,7 +5,7 @@ import mediapipe as mp
 import random
 import time
 import pyttsx3
-import threading
+import queue
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
@@ -14,13 +14,19 @@ engine = pyttsx3.init(driverName='sapi5')
 engine.setProperty('rate', 150)
 engine.setProperty('volume', 1.0)
 
-def speak_async(text):
-    def run():
-        print("Speaking:", text)  # Debug
+speech_queue = queue.Queue()
+
+def speak(text):
+    # Only queue if empty (prevents spam)
+    if speech_queue.empty():
+        speech_queue.put(text)
+
+def process_speech():
+    if not speech_queue.empty():
+        text = speech_queue.get()
+        print("Speaking:", text)
         engine.say(text)
         engine.runAndWait()
-    threading.Thread(target=run, daemon=True).start()
-
 
 # Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
@@ -50,14 +56,10 @@ total = 0
 last_action_time = 0
 COOLDOWN = 2  # seconds
 
-# 🔊 Voice cooldown (avoid spam)
-last_spoken_time = 0
-VOICE_COOLDOWN = 2
-
 cap = cv2.VideoCapture(0)
 
-# Speak first instruction
-speak_async(f"Show {target}")
+# 🔊 Speak first instruction
+speak(f"Show {target}")
 
 while True:
     ret, frame = cap.read()
@@ -121,17 +123,10 @@ while True:
             if stable_label == target:
                 result_text = "Correct ✅"
                 score += 1
-
-                if current_time - last_spoken_time > VOICE_COOLDOWN:
-                    speak_async("Correct")
-                    last_spoken_time = current_time
-
+                speak("Correct")
             else:
                 result_text = "Try Again ❌"
-
-                if current_time - last_spoken_time > VOICE_COOLDOWN:
-                    speak_async("Try again")
-                    last_spoken_time = current_time
+                speak("Try again")
 
             # 🔥 New target
             target = random.choice(labels)
@@ -139,12 +134,13 @@ while True:
             last_action_time = current_time
 
             # 🔊 Speak next target
-            if current_time - last_spoken_time > VOICE_COOLDOWN:
-                speak_async(f"Show {target}")
-                last_spoken_time = current_time
+            speak(f"Show {target}")
 
     else:
         result_text = "Wait..."
+
+    # 🔊 Process speech queue (IMPORTANT)
+    process_speech()
 
     # 🔥 Display
     cv2.putText(frame, f"Target: {target}",
