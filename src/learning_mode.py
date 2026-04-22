@@ -5,40 +5,41 @@ import mediapipe as mp
 import random
 import time
 import pyttsx3
+import threading
 import queue
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
-# 🔊 Initialize voice engine
+# ================= VOICE SYSTEM ================= #
+
 engine = pyttsx3.init(driverName='sapi5')
 engine.setProperty('rate', 150)
 engine.setProperty('volume', 1.0)
 
 speech_queue = queue.Queue()
-is_speaking = False
+
+def speech_worker():
+    while True:
+        text = speech_queue.get()
+        if text is None:
+            break
+        print("Speaking:", text)
+        engine.say(text)
+        engine.runAndWait()
+
+# Start speech thread
+threading.Thread(target=speech_worker, daemon=True).start()
 
 def speak(text):
     speech_queue.put(text)
 
-def process_speech():
-    global is_speaking
+# ================= MODEL ================= #
 
-    if not speech_queue.empty() and not is_speaking:
-        is_speaking = True
-        text = speech_queue.get()
-        print("Speaking:", text)
-
-        engine.say(text)
-        engine.runAndWait()
-
-        is_speaking = False
-
-
-# Load model
 model = tf.keras.models.load_model("models/landmark_model.keras")
 labels = np.load("models/landmark_labels.npy")
 
-# MediaPipe
+# ================= MEDIAPIPE ================= #
+
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     max_num_hands=1,
@@ -48,24 +49,23 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# 🔥 Stability
+# ================= LOGIC ================= #
+
 stable_label = ""
 stable_count = 0
 REQUIRED_STABLE = 7
 
-# 🔥 Learning system
 target = random.choice(labels)
 score = 0
 total = 0
 
-# 🔥 Cooldown
 last_action_time = 0
-COOLDOWN = 2  # seconds
+COOLDOWN = 2
+
+# Speak first instruction
+speak(f"Show {target}")
 
 cap = cv2.VideoCapture(0)
-
-# 🔊 First instruction
-speak(f"Show {target}")
 
 while True:
     ret, frame = cap.read()
@@ -87,14 +87,9 @@ while True:
             results.multi_hand_landmarks,
             results.multi_handedness
         ):
-            hand_label = hand_info.classification[0].label
-            is_left = (hand_label == "Left")
+            is_left = (hand_info.classification[0].label == "Left")
 
-            mp_draw.draw_landmarks(
-                frame,
-                hand_landmarks,
-                mp_hands.HAND_CONNECTIONS
-            )
+            mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
             row = []
             for lm in hand_landmarks.landmark:
@@ -110,7 +105,7 @@ while True:
 
                 label = labels[class_index]
 
-    # 🔥 Stability logic
+    # Stability
     if label == stable_label:
         stable_count += 1
     else:
@@ -119,7 +114,7 @@ while True:
 
     result_text = "Show the sign"
 
-    # 🔥 Cooldown logic
+    # Cooldown logic
     if current_time - last_action_time > COOLDOWN:
 
         if stable_count > REQUIRED_STABLE and confidence > 0.7:
@@ -131,10 +126,10 @@ while True:
                 score += 1
                 speak("Correct")
             else:
-                result_text = "Try Again ❌"
+                result_text = "Try again ❌"
                 speak("Try again")
 
-            # 🔥 New target
+            # New target
             target = random.choice(labels)
             stable_count = 0
             last_action_time = current_time
@@ -144,29 +139,29 @@ while True:
     else:
         result_text = "Wait..."
 
-    # 🔊 Process speech queue (IMPORTANT)
-    process_speech()
-
-    # 🔥 Display
+    # Display
     cv2.putText(frame, f"Target: {target}",
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (0, 255, 0), 2)
+                1, (0,255,0), 2)
 
     cv2.putText(frame, result_text,
                 (20, 100),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (255, 255, 0), 2)
+                1, (255,255,0), 2)
 
     cv2.putText(frame, f"Score: {score}/{total}",
                 (20, 150),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                1, (0, 255, 255), 2)
+                1, (0,255,255), 2)
 
-    cv2.imshow("Learning Mode (Voice Enabled)", frame)
+    cv2.imshow("Learning Mode (Voice Stable)", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
 cap.release()
 cv2.destroyAllWindows()
+
+# Stop speech thread safely
+speech_queue.put(None)
