@@ -27,20 +27,20 @@ class VoiceAssistant:
         self.thread.start()
 
     def _worker(self):
-        # Engine is initialized strictly inside the worker thread
-        engine = pyttsx3.init(driverName='sapi5')
-        engine.setProperty('rate', self.rate)
-        
         while True:
             text = self.speech_queue.get()
-            if text is None: # Sentinel value to stop the thread
+            if text is None:
                 break
-            
+
             print(f"🎤 Speaking: {text}")
+            # Reinitialize engine for each item to avoid state issues
+            engine = pyttsx3.init(driverName='sapi5')
+            engine.setProperty('rate', self.rate)
             engine.say(text)
             engine.runAndWait()
+            engine.stop()  # Explicitly release the engine
             self.speech_queue.task_done()
-
+            
     def speak(self, text):
         """Adds text to the queue to be spoken."""
         self.speech_queue.put(text)
