@@ -10,11 +10,10 @@ import queue
 
 from src.utils.landmark_normalizer import normalize_landmarks
 
-# ================= VOICE SYSTEM ================= #
+# ================= VOICE ================= #
 
 engine = pyttsx3.init(driverName='sapi5')
 engine.setProperty('rate', 150)
-engine.setProperty('volume', 1.0)
 
 speech_queue = queue.Queue()
 
@@ -27,7 +26,6 @@ def speech_worker():
         engine.say(text)
         engine.runAndWait()
 
-# Start speech thread
 threading.Thread(target=speech_worker, daemon=True).start()
 
 def speak(text):
@@ -59,10 +57,8 @@ target = random.choice(labels)
 score = 0
 total = 0
 
-last_action_time = 0
-COOLDOWN = 2
+ready_for_next = True  # 🔥 KEY FIX
 
-# Speak first instruction
 speak(f"Show {target}")
 
 cap = cv2.VideoCapture(0)
@@ -80,9 +76,10 @@ while True:
     label = ""
     confidence = 0
 
-    current_time = time.time()
+    # 🔥 Detect hand presence
+    hand_detected = results.multi_hand_landmarks is not None
 
-    if results.multi_hand_landmarks:
+    if hand_detected:
         for hand_landmarks, hand_info in zip(
             results.multi_hand_landmarks,
             results.multi_handedness
@@ -105,7 +102,7 @@ while True:
 
                 label = labels[class_index]
 
-    # Stability
+    # 🔥 Stability
     if label == stable_label:
         stable_count += 1
     else:
@@ -114,8 +111,8 @@ while True:
 
     result_text = "Show the sign"
 
-    # Cooldown logic
-    if current_time - last_action_time > COOLDOWN:
+    # 🔥 MAIN FIX LOGIC
+    if hand_detected and ready_for_next:
 
         if stable_count > REQUIRED_STABLE and confidence > 0.7:
 
@@ -131,15 +128,17 @@ while True:
 
             # New target
             target = random.choice(labels)
-            stable_count = 0
-            last_action_time = current_time
-
             speak(f"Show {target}")
 
-    else:
-        result_text = "Wait..."
+            stable_count = 0
+            ready_for_next = False  # 🔒 LOCK
 
-    # Display
+    # 🔥 UNLOCK when hand removed
+    if not hand_detected:
+        ready_for_next = True
+
+    # ================= DISPLAY ================= #
+
     cv2.putText(frame, f"Target: {target}",
                 (20, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -155,7 +154,7 @@ while True:
                 cv2.FONT_HERSHEY_SIMPLEX,
                 1, (0,255,255), 2)
 
-    cv2.imshow("Learning Mode (Voice Stable)", frame)
+    cv2.imshow("Learning Mode (FINAL FIX)", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
@@ -163,5 +162,4 @@ while True:
 cap.release()
 cv2.destroyAllWindows()
 
-# Stop speech thread safely
 speech_queue.put(None)
