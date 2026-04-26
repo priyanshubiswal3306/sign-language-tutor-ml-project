@@ -4,16 +4,25 @@ import "./App.css";
 function App() {
   const videoRef = useRef(null);
 
-  const [tab, setTab] = useState("sentence");
+  const [tab, setTab] = useState("predict");
   const [prediction, setPrediction] = useState("");
+
+  // ================= SENTENCE =================
   const [sentence, setSentence] = useState("");
-
-  // ================= BUFFER (KEY FIX) =================
-  const bufferRef = useRef([]);
-  const BUFFER_SIZE = 5;
-
+  const stableRef = useRef("");
+  const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
-  const cooldownRef = useRef(false);
+  const lastTimeRef = useRef(0);
+
+  // ================= QUIZ =================
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+  const [target, setTarget] = useState("");
+  const [score, setScore] = useState(0);
+  const [total, setTotal] = useState(0);
+  const MAX_Q = 30;
+
+  const quizLockRef = useRef(false);
+  const quizStartRef = useRef(0);
 
   // ================= CAMERA =================
   const startCamera = async () => {
@@ -21,7 +30,7 @@ function App() {
     videoRef.current.srcObject = stream;
   };
 
-  // ================= PREDICT =================
+  // ================= PREDICTION =================
   const predictFrame = async () => {
     if (!videoRef.current) return;
 
@@ -46,71 +55,44 @@ function App() {
     }, "image/jpeg");
   };
 
-  // ================= REAL-TIME LOOP =================
+  // ================= GLOBAL LOOP =================
   useEffect(() => {
     const interval = setInterval(() => {
       predictFrame();
-    }, 500);
+    }, 600);
 
     return () => clearInterval(interval);
   }, []);
 
-  // ================= STABLE PREDICTION =================
-  const getStablePrediction = () => {
-    const counts = {};
-    bufferRef.current.forEach((p) => {
-      if (!p) return;
-      counts[p] = (counts[p] || 0) + 1;
-    });
-
-    let max = 0;
-    let best = "";
-
-    for (let key in counts) {
-      if (counts[key] > max) {
-        max = counts[key];
-        best = key;
-      }
-    }
-
-    // require majority
-    if (max >= 3) return best;
-
-    return "";
-  };
-
-  // ================= SENTENCE LOGIC (FINAL FIX) =================
+  // ================= SENTENCE LOGIC =================
   useEffect(() => {
     if (tab !== "sentence") return;
+    if (!prediction) return;
 
-    // update buffer
-    bufferRef.current.push(prediction);
-    if (bufferRef.current.length > BUFFER_SIZE) {
-      bufferRef.current.shift();
+    const now = Date.now();
+
+    // stability tracking
+    if (prediction === stableRef.current) {
+      stableCountRef.current += 1;
+    } else {
+      stableRef.current = prediction;
+      stableCountRef.current = 1;
     }
 
-    const stable = getStablePrediction();
+    // stable detection
+    if (
+      stableCountRef.current >= 3 &&
+      prediction !== lastAddedRef.current &&
+      now - lastTimeRef.current > 800
+    ) {
+      setSentence((prev) => prev + prediction);
 
-    if (!stable) return;
-
-    // prevent duplicate spam
-    if (stable === lastAddedRef.current) return;
-
-    if (cooldownRef.current) return;
-
-    // ADD LETTER
-    setSentence((prev) => prev + stable);
-
-    lastAddedRef.current = stable;
-
-    // cooldown (prevents fast repeats)
-    cooldownRef.current = true;
-    setTimeout(() => {
-      cooldownRef.current = false;
-    }, 800);
+      lastAddedRef.current = prediction;
+      lastTimeRef.current = now;
+    }
   }, [prediction, tab]);
 
-  // ================= KEYBOARD SUPPORT =================
+  // ================= KEYBOARD =================
   useEffect(() => {
     const handleKey = (e) => {
       if (tab !== "sentence") return;
@@ -128,10 +110,40 @@ function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [tab]);
 
+  // ================= QUIZ =================
+  const startQuiz = () => {
+    setScore(0);
+    setTotal(0);
+    setTarget(letters[Math.floor(Math.random() * letters.length)]);
+    quizLockRef.current = false;
+  };
+
+  useEffect(() => {
+    if (tab !== "quiz") return;
+    if (!prediction || total >= MAX_Q) return;
+
+    const now = Date.now();
+
+    if (!quizLockRef.current) {
+      quizLockRef.current = true;
+      quizStartRef.current = now;
+    }
+
+    if (now - quizStartRef.current > 2000) {
+      if (prediction === target) {
+        setScore((s) => s + 1);
+      }
+
+      setTotal((t) => t + 1);
+
+      setTarget(letters[Math.floor(Math.random() * letters.length)]);
+      quizLockRef.current = false;
+    }
+  }, [prediction, tab]);
+
   // ================= UI =================
   return (
     <div className="app">
-
       <h1 className="title">🤟 AI Sign Language Tutor</h1>
 
       <div className="tabs">
@@ -146,7 +158,7 @@ function App() {
         ))}
       </div>
 
-      {/* CAMERA */}
+      {/* CAMERA + LIVE PREDICTION (shared UI only) */}
       <div className="center">
         <div className="camera">
           <video ref={videoRef} autoPlay />
@@ -159,13 +171,48 @@ function App() {
         <h3>Live Prediction: {prediction || "None"}</h3>
       </div>
 
+      {/* GUIDE */}
+      {tab === "guide" && (
+        <div className="grid">
+          {letters.map((l) => (
+            <div key={l} className="card">
+              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={l} />
+              <p>{l}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* PREDICT */}
+      {tab === "predict" && (
+        <h2 className="output">Prediction: {prediction}</h2>
+      )}
+
+      {/* QUIZ */}
+      {tab === "quiz" && (
+        <div className="center">
+          <h2>Target: {target}</h2>
+          <h2>Score: {score}/{total}</h2>
+
+          <button className="btn blue" onClick={startQuiz}>
+            Start Quiz
+          </button>
+
+          {total >= MAX_Q && (
+            <h2 className="result">
+              Final Score: {score}/{MAX_Q}
+            </h2>
+          )}
+        </div>
+      )}
+
       {/* SENTENCE */}
       {tab === "sentence" && (
         <div className="center">
           <h2 className="sentence">{sentence}</h2>
 
           <p className="hint">
-            Space = SPACE key | Delete = BACKSPACE
+            SPACE = space | BACKSPACE = delete
           </p>
 
           <button className="btn red" onClick={() => setSentence("")}>
