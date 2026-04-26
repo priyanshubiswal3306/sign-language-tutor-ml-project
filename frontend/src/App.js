@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect, useCallback } from "react";
 import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
 const MAX_Q = 30;
 
 function App() {
@@ -9,16 +10,21 @@ function App() {
   const videoRef = useRef(null);
   const tabRef = useRef("predict");
 
-  // Sentence Refs
+  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
+  const handDetectedRef = useRef(false);
 
   // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
-  const quizStartTimeRef = useRef(0); 
-  const handDetectedRef = useRef(false); // Tracks if the hand has entered the frame yet
+  const quizStartTimeRef = useRef(0);
+
+  // Word Mode Refs
+  const wordActiveRef = useRef(false);
+  const targetWordRef = useRef("");
+  const wordIndexRef = useRef(0);
 
   // ================= STATES =================
   const [tab, setTabState] = useState("predict");
@@ -32,11 +38,24 @@ function App() {
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
   const [target, setTarget] = useState("");
+  const [quizStats, setQuizStats] = useState([]); // Stores analytics
+
+  // Word State
+  const [word, setWord] = useState("");
+  const [wordProgress, setWordProgress] = useState(0);
+  const [wordComplete, setWordComplete] = useState(false);
 
   // ================= HELPERS =================
   const setTab = (newTab) => {
     setTabState(newTab);
     tabRef.current = newTab;
+  };
+
+  const speakSentence = () => {
+    if (!sentence) return;
+    const utterance = new SpeechSynthesisUtterance(sentence);
+    utterance.rate = 0.9; // Slightly slower for clarity
+    window.speechSynthesis.speak(utterance);
   };
 
   // ================= CAMERA =================
@@ -77,7 +96,6 @@ function App() {
         
         setPrediction(currentPred);
 
-        // Only run logic if a hand/sign is actually detected
         if (currentPred) {
           handleAppLogic(currentPred);
         }
@@ -108,18 +126,29 @@ function App() {
 
     // --- QUIZ LOGIC ---
     if (currentTab === "quiz" && quizActiveRef.current) {
-      
-      // 1. Start the hidden timer the moment the AI detects the hand for the first time
       if (!handDetectedRef.current) {
         handDetectedRef.current = true;
         quizStartTimeRef.current = Date.now();
       }
 
-      // 2. Check for correct answer
       if (currentPred === quizTargetRef.current) {
         stableCountRef.current += 1;
         if (stableCountRef.current >= 2) {
-          progressQuiz(true); // Guessed correctly!
+          progressQuiz(true);
+        }
+      } else {
+        stableCountRef.current = 0;
+      }
+    }
+
+    // --- WORD/BEE LOGIC ---
+    if (currentTab === "word" && wordActiveRef.current && !wordComplete) {
+      const currentTargetLetter = targetWordRef.current[wordIndexRef.current];
+
+      if (currentPred === currentTargetLetter) {
+        stableCountRef.current += 1;
+        if (stableCountRef.current >= 2) {
+          progressWord();
         }
       } else {
         stableCountRef.current = 0;
@@ -127,11 +156,50 @@ function App() {
     }
   };
 
-  // ================= QUIZ CONTROLS =================
-  const progressQuiz = useCallback((isCorrect) => {
-    if (isCorrect) {
-      setScore((s) => s + 1);
+  // ================= FEATURE CONTROLS =================
+  
+  // -- WORD --
+  const startWordMode = () => {
+    const randomWord = WORDS[Math.floor(Math.random() * WORDS.length)];
+    setWord(randomWord);
+    targetWordRef.current = randomWord;
+    
+    setWordProgress(0);
+    wordIndexRef.current = 0;
+    
+    setWordComplete(false);
+    wordActiveRef.current = true;
+    stableCountRef.current = 0;
+  };
+
+  const progressWord = () => {
+    wordIndexRef.current += 1;
+    setWordProgress(wordIndexRef.current);
+    stableCountRef.current = 0;
+
+    if (wordIndexRef.current >= targetWordRef.current.length) {
+      wordActiveRef.current = false;
+      setWordComplete(true);
     }
+  };
+
+  // -- QUIZ --
+  const progressQuiz = useCallback((isCorrect) => {
+    // Record Analytics
+    const timeTaken = handDetectedRef.current 
+      ? ((Date.now() - quizStartTimeRef.current) / 1000).toFixed(1) 
+      : 0;
+
+    setQuizStats((prev) => [
+      ...prev,
+      {
+        letter: quizTargetRef.current,
+        correct: isCorrect,
+        time: isCorrect ? timeTaken : "Skipped",
+      },
+    ]);
+
+    if (isCorrect) setScore((s) => s + 1);
 
     setTotal((prevTotal) => {
       const newTotal = prevTotal + 1;
@@ -141,13 +209,11 @@ function App() {
         return newTotal;
       }
 
-      // Setup next question
       const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
       setTarget(randomLetter);
       quizTargetRef.current = randomLetter;
       stableCountRef.current = 0;
       
-      // Pause the timer until the hand is detected again
       handDetectedRef.current = false;
       quizStartTimeRef.current = 0; 
       
@@ -158,21 +224,19 @@ function App() {
   const startQuiz = () => {
     setScore(0);
     setTotal(0);
+    setQuizStats([]); // Reset analytics
     quizActiveRef.current = true;
     
-    // Setup first question
     const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
     setTarget(randomLetter);
     quizTargetRef.current = randomLetter;
     stableCountRef.current = 0;
     
-    // Pause the timer until the hand is detected
     handDetectedRef.current = false;
     quizStartTimeRef.current = 0;
   };
 
   // ================= INTERVALS =================
-  // 1. Camera Frame Loop
   useEffect(() => {
     let interval;
     if (isCameraRunning && tab !== "guide") {
@@ -183,19 +247,16 @@ function App() {
     return () => clearInterval(interval);
   }, [isCameraRunning, tab, processFrame]);
 
-  // 2. Hidden 5-Second Quiz Timer Loop
   useEffect(() => {
     const timerInterval = setInterval(() => {
       if (tabRef.current === "quiz" && quizActiveRef.current) {
-        // Only run the timeout check if the hand has actually entered the frame
         if (handDetectedRef.current && quizStartTimeRef.current > 0) {
           if (Date.now() - quizStartTimeRef.current >= 5000) {
-            progressQuiz(false); // Time is up! Skip automatically.
+            progressQuiz(false); 
           }
         }
       }
     }, 500);
-
     return () => clearInterval(timerInterval);
   }, [progressQuiz]);
 
@@ -203,7 +264,6 @@ function App() {
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
-
       if (e.key === " ") {
         setSentence((prev) => prev + " ");
         lastAddedRef.current = ""; 
@@ -212,10 +272,52 @@ function App() {
         lastAddedRef.current = ""; 
       }
     };
-
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
+
+  // ================= RENDER HELPERS =================
+  const renderAnalytics = () => {
+    const correctAnswers = quizStats.filter(s => s.correct);
+    const fastest = correctAnswers.length > 0 
+      ? correctAnswers.reduce((min, p) => parseFloat(p.time) < parseFloat(min.time) ? p : min, correctAnswers[0]) 
+      : null;
+    const slowest = correctAnswers.length > 0 
+      ? correctAnswers.reduce((max, p) => parseFloat(p.time) > parseFloat(max.time) ? p : max, correctAnswers[0]) 
+      : null;
+
+    return (
+      <div className="analytics-container">
+        <h3>📊 Post-Quiz Analytics</h3>
+        <div className="stats-highlight">
+          <p><strong>Fastest Sign:</strong> {fastest ? `${fastest.letter} (${fastest.time}s)` : "N/A"}</p>
+          <p><strong>Slowest Sign:</strong> {slowest ? `${slowest.letter} (${slowest.time}s)` : "N/A"}</p>
+        </div>
+        <div className="stats-table-container">
+          <table className="stats-table">
+            <thead>
+              <tr>
+                <th>Q#</th>
+                <th>Letter</th>
+                <th>Result</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {quizStats.map((stat, i) => (
+                <tr key={i} className={stat.correct ? "row-correct" : "row-skipped"}>
+                  <td>{i + 1}</td>
+                  <td>{stat.letter}</td>
+                  <td>{stat.correct ? "✅" : "❌"}</td>
+                  <td>{stat.time}{stat.correct ? "s" : ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
 
   // ================= UI RENDER =================
   return (
@@ -223,7 +325,7 @@ function App() {
       <h1 className="title">🤟 AI Sign Language Tutor</h1>
 
       <div className="tabs">
-        {["guide", "predict", "quiz", "sentence"].map((t) => (
+        {["guide", "predict", "quiz", "word", "sentence"].map((t) => (
           <button
             key={t}
             className={`tab ${tab === t ? "active" : ""}`}
@@ -234,23 +336,16 @@ function App() {
         ))}
       </div>
 
-      <div 
-        className="center" 
-        style={{ display: tab === "guide" ? "none" : "flex" }}
-      >
+      <div className="center" style={{ display: tab === "guide" ? "none" : "flex" }}>
         <div className="camera-container">
           <video ref={videoRef} autoPlay playsInline muted />
           {!isCameraRunning && (
             <div className="camera-placeholder">
-              <button className="btn" onClick={startCamera}>
-                Start Camera
-              </button>
+              <button className="btn" onClick={startCamera}>Start Camera</button>
             </div>
           )}
         </div>
-        {isCameraRunning && (
-          <h3 className="live-pred">Live: {prediction || "..."}</h3>
-        )}
+        {isCameraRunning && <h3 className="live-pred">Live: {prediction || "..."}</h3>}
       </div>
 
       {/* GUIDE */}
@@ -275,14 +370,13 @@ function App() {
       {/* QUIZ */}
       {tab === "quiz" && (
         <div className="center mt-20">
-          {!quizActiveRef.current && total < MAX_Q ? (
-            <button className="btn blue" onClick={startQuiz}>
-              Start 30-Question Quiz
-            </button>
+          {!quizActiveRef.current && total < MAX_Q && total === 0 ? (
+            <button className="btn blue" onClick={startQuiz}>Start 30-Question Quiz</button>
           ) : total >= MAX_Q ? (
             <div className="result-card">
               <h2>Quiz Complete!</h2>
               <h1 className="score-text">{score} / {MAX_Q}</h1>
+              {renderAnalytics()}
               <button className="btn blue" onClick={startQuiz}>Play Again</button>
             </div>
           ) : (
@@ -290,9 +384,34 @@ function App() {
               <h2>Form the letter:</h2>
               <h1 className="target-letter">{target}</h1>
               <p>Question: {total + 1} / {MAX_Q} | Score: {score}</p>
-              <button className="btn red" onClick={() => progressQuiz(false)}>
-                Skip Letter
-              </button>
+              <button className="btn red" onClick={() => progressQuiz(false)}>Skip Letter</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* WORD MODE */}
+      {tab === "word" && (
+        <div className="center mt-20">
+          {!wordActiveRef.current && !wordComplete ? (
+             <button className="btn blue" onClick={startWordMode}>Start Spelling Bee</button>
+          ) : wordComplete ? (
+            <div className="result-card">
+              <h2>Great Job! 🎉</h2>
+              <h1 className="word-display success">{word}</h1>
+              <button className="btn blue mt-20" onClick={startWordMode}>Next Word</button>
+            </div>
+          ) : (
+            <div className="word-active">
+              <h2>Spell the word:</h2>
+              <div className="word-display">
+                {word.split("").map((char, i) => (
+                  <span key={i} className={`word-char ${i < wordProgress ? "completed" : i === wordProgress ? "current" : ""}`}>
+                    {char}
+                  </span>
+                ))}
+              </div>
+              <p className="hint mt-20">Sign the highlighted letter.</p>
             </div>
           )}
         </div>
@@ -308,12 +427,14 @@ function App() {
           <p className="hint">
             Hold sign to type • Press <strong>SPACE</strong> for gap • Press <strong>BACKSPACE</strong> to delete
           </p>
-          <button className="btn red" onClick={() => {
-            setSentence("");
-            lastAddedRef.current = "";
-          }}>
-            Clear Sentence
-          </button>
+          <div className="button-group">
+            <button className="btn blue" onClick={speakSentence} disabled={!sentence}>
+              🗣️ Speak
+            </button>
+            <button className="btn red" onClick={() => { setSentence(""); lastAddedRef.current = ""; }}>
+              Clear
+            </button>
+          </div>
         </div>
       )}
     </div>

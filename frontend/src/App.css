@@ -1,3 +1,4 @@
+/* ================= BASE STYLES ================= */
 body {
   margin: 0;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -12,6 +13,18 @@ body {
   font-size: 2rem;
 }
 
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.mt-20 {
+  margin-top: 20px;
+}
+
+/* ================= TABS ================= */
 .tabs {
   display: flex;
   justify-content: center;
@@ -39,18 +52,7 @@ body {
   background: #3b82f6;
 }
 
-.center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-}
-
-.mt-20 {
-  margin-top: 20px;
-}
-
-/* Camera Area */
+/* ================= CAMERA & LIVE FEED ================= */
 .camera-container {
   position: relative;
   width: 300px;
@@ -80,7 +82,7 @@ video {
   font-weight: normal;
 }
 
-/* Buttons */
+/* ================= BUTTONS ================= */
 .btn {
   padding: 12px 24px;
   border-radius: 10px;
@@ -91,12 +93,30 @@ video {
   font-weight: bold;
   cursor: pointer;
   margin: 5px;
+  transition: opacity 0.2s;
+}
+
+.btn:hover {
+  opacity: 0.9;
 }
 
 .btn.red { background: #ef4444; }
 .btn.blue { background: #3b82f6; }
 
-/* Guide Grid */
+.button-group {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.btn:disabled {
+  background: #475569;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ================= GUIDE TAB ================= */
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
@@ -118,7 +138,7 @@ video {
   border-radius: 5px;
 }
 
-/* Quiz */
+/* ================= QUIZ TAB ================= */
 .target-letter {
   font-size: 4rem;
   color: #facc15;
@@ -135,9 +155,91 @@ video {
   padding: 30px;
   border-radius: 15px;
   border: 1px solid #334155;
+  min-width: 300px;
 }
 
-/* Sentence */
+/* ================= QUIZ ANALYTICS ================= */
+.analytics-container {
+  margin-top: 20px;
+  background: #0f172a;
+  padding: 15px;
+  border-radius: 10px;
+  text-align: left;
+}
+
+.stats-highlight {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 15px;
+  font-size: 0.9rem;
+  color: #94a3b8;
+}
+
+.stats-table-container {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid #334155;
+  border-radius: 5px;
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.stats-table th {
+  background: #334155;
+  padding: 10px;
+  position: sticky;
+  top: 0;
+}
+
+.stats-table td {
+  padding: 8px;
+  border-bottom: 1px solid #334155;
+}
+
+.row-correct { color: #22c55e; }
+.row-skipped { color: #ef4444; }
+
+/* ================= WORD / SPELLING BEE TAB ================= */
+.word-display {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 20px;
+  font-size: 3rem;
+  font-weight: bold;
+}
+
+.word-char {
+  padding: 5px 15px;
+  border-radius: 10px;
+  background: #334155;
+  color: #64748b; 
+  transition: all 0.3s ease;
+}
+
+.word-char.current {
+  background: #3b82f6;
+  color: white;
+  transform: scale(1.1);
+  box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+}
+
+.word-char.completed {
+  background: #22c55e;
+  color: white;
+}
+
+.word-display.success {
+  color: #22c55e;
+  letter-spacing: 5px;
+}
+
+/* ================= SENTENCE TAB ================= */
 .sentence-box {
   min-width: 300px;
   min-height: 60px;
