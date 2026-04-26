@@ -47,6 +47,7 @@ video {
   background: #22c55e;
   border: none;
   color: white;
+  cursor: pointer;
 }
 
 .btn.blue {
@@ -82,7 +83,7 @@ video {
 
 .sentence {
   margin-top: 20px;
-  font-size: 24px;
+  font-size: 26px;
   color: #facc15;
 }
 

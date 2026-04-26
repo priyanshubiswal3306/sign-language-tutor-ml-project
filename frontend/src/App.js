@@ -7,15 +7,20 @@ function App() {
   const [tab, setTab] = useState("predict");
   const [prediction, setPrediction] = useState("");
 
-  // Sentence
+  // ================= SENTENCE =================
   const [sentence, setSentence] = useState("");
   const lastAddedRef = useRef("");
   const lastTimeRef = useRef(0);
+  const stableRef = useRef("");
+  const stableCountRef = useRef(0);
 
-  // Quiz
+  // ================= QUIZ =================
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
   const [target, setTarget] = useState("");
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
+  const [timer, setTimer] = useState(5);
+  const timerRef = useRef(null);
   const MAX_Q = 30;
 
   // ================= CAMERA =================
@@ -26,6 +31,8 @@ function App() {
 
   // ================= PREDICT =================
   const predictFrame = async () => {
+    if (!videoRef.current) return;
+
     const canvas = document.createElement("canvas");
     canvas.width = 300;
     canvas.height = 300;
@@ -50,19 +57,27 @@ function App() {
   // ================= REAL-TIME LOOP =================
   useEffect(() => {
     const interval = setInterval(() => {
-      if (videoRef.current) predictFrame();
+      predictFrame();
     }, 800);
 
     return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE AUTO ADD =================
+  // ================= SENTENCE STABILITY =================
   useEffect(() => {
     const now = Date.now();
 
+    if (tab !== "sentence" || !prediction) return;
+
+    if (prediction === stableRef.current) {
+      stableCountRef.current += 1;
+    } else {
+      stableRef.current = prediction;
+      stableCountRef.current = 1;
+    }
+
     if (
-      tab === "sentence" &&
-      prediction &&
+      stableCountRef.current > 3 &&
       prediction !== lastAddedRef.current &&
       now - lastTimeRef.current > 1500
     ) {
@@ -70,24 +85,46 @@ function App() {
 
       lastAddedRef.current = prediction;
       lastTimeRef.current = now;
+      stableCountRef.current = 0;
     }
   }, [prediction, tab]);
 
-  // ================= QUIZ LOGIC =================
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-
+  // ================= QUIZ =================
   const startQuiz = () => {
     setScore(0);
     setTotal(0);
-    setTarget(letters[Math.floor(Math.random() * letters.length)]);
+    nextQuestion();
   };
 
+  const nextQuestion = () => {
+    setTarget(letters[Math.floor(Math.random() * letters.length)]);
+    setTimer(5);
+
+    clearInterval(timerRef.current);
+
+    timerRef.current = setInterval(() => {
+      setTimer((t) => {
+        if (t <= 1) {
+          clearInterval(timerRef.current);
+          setTotal((prev) => prev + 1); // wrong
+          nextQuestion();
+          return 5;
+        }
+        return t - 1;
+      });
+    }, 1000);
+  };
+
+  // Check correct answer
   useEffect(() => {
-    if (tab === "quiz" && target && prediction) {
+    if (tab === "quiz" && prediction && target && total < MAX_Q) {
       if (prediction === target) {
+        clearInterval(timerRef.current);
+
         setScore((s) => s + 1);
         setTotal((t) => t + 1);
-        setTarget(letters[Math.floor(Math.random() * letters.length)]);
+
+        nextQuestion();
       }
     }
   }, [prediction, tab]);
@@ -116,7 +153,7 @@ function App() {
         <div className="grid">
           {letters.map((l) => (
             <div key={l} className="card">
-              <img src={`/data/guide_images/Sign_language_${l}.png`} />
+              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={l} />
               <p>{l}</p>
             </div>
           ))}
@@ -154,6 +191,7 @@ function App() {
           </button>
 
           <h2>Target: {target}</h2>
+          <h2>⏱ Time Left: {timer}s</h2>
           <h2>Score: {score}/{total}</h2>
 
           {total >= MAX_Q && (
@@ -175,9 +213,7 @@ function App() {
             Start Camera
           </button>
 
-          <h2 className="sentence">
-            {sentence}
-          </h2>
+          <h2 className="sentence">{sentence}</h2>
         </div>
       )}
     </div>
