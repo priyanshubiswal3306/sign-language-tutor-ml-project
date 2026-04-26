@@ -17,7 +17,8 @@ function App() {
   // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
-  const quizStartTimeRef = useRef(0); // Tracks when the current question started
+  const quizStartTimeRef = useRef(0); 
+  const handDetectedRef = useRef(false); // Tracks if the hand has entered the frame yet
 
   // ================= STATES =================
   const [tab, setTabState] = useState("predict");
@@ -76,6 +77,7 @@ function App() {
         
         setPrediction(currentPred);
 
+        // Only run logic if a hand/sign is actually detected
         if (currentPred) {
           handleAppLogic(currentPred);
         }
@@ -106,6 +108,14 @@ function App() {
 
     // --- QUIZ LOGIC ---
     if (currentTab === "quiz" && quizActiveRef.current) {
+      
+      // 1. Start the hidden timer the moment the AI detects the hand for the first time
+      if (!handDetectedRef.current) {
+        handDetectedRef.current = true;
+        quizStartTimeRef.current = Date.now();
+      }
+
+      // 2. Check for correct answer
       if (currentPred === quizTargetRef.current) {
         stableCountRef.current += 1;
         if (stableCountRef.current >= 2) {
@@ -118,7 +128,6 @@ function App() {
   };
 
   // ================= QUIZ CONTROLS =================
-  // Handles moving to the next question for both correct answers and timeouts
   const progressQuiz = useCallback((isCorrect) => {
     if (isCorrect) {
       setScore((s) => s + 1);
@@ -127,7 +136,6 @@ function App() {
     setTotal((prevTotal) => {
       const newTotal = prevTotal + 1;
       
-      // Check if quiz is over
       if (newTotal >= MAX_Q) {
         quizActiveRef.current = false;
         return newTotal;
@@ -138,7 +146,10 @@ function App() {
       setTarget(randomLetter);
       quizTargetRef.current = randomLetter;
       stableCountRef.current = 0;
-      quizStartTimeRef.current = Date.now(); // Reset the hidden timer
+      
+      // Pause the timer until the hand is detected again
+      handDetectedRef.current = false;
+      quizStartTimeRef.current = 0; 
       
       return newTotal;
     });
@@ -154,7 +165,10 @@ function App() {
     setTarget(randomLetter);
     quizTargetRef.current = randomLetter;
     stableCountRef.current = 0;
-    quizStartTimeRef.current = Date.now();
+    
+    // Pause the timer until the hand is detected
+    handDetectedRef.current = false;
+    quizStartTimeRef.current = 0;
   };
 
   // ================= INTERVALS =================
@@ -173,12 +187,14 @@ function App() {
   useEffect(() => {
     const timerInterval = setInterval(() => {
       if (tabRef.current === "quiz" && quizActiveRef.current) {
-        // If 5000ms (5 seconds) have passed since the question started
-        if (Date.now() - quizStartTimeRef.current >= 5000) {
-          progressQuiz(false); // Time is up! Skip automatically.
+        // Only run the timeout check if the hand has actually entered the frame
+        if (handDetectedRef.current && quizStartTimeRef.current > 0) {
+          if (Date.now() - quizStartTimeRef.current >= 5000) {
+            progressQuiz(false); // Time is up! Skip automatically.
+          }
         }
       }
-    }, 500); // Check the clock every half-second
+    }, 500);
 
     return () => clearInterval(timerInterval);
   }, [progressQuiz]);
