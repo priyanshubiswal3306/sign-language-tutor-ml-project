@@ -9,7 +9,6 @@ function App() {
 
   // ================= SENTENCE =================
   const [sentence, setSentence] = useState("");
-  const lastAddedRef = useRef("");
   const lastTimeRef = useRef(0);
   const stableRef = useRef("");
   const stableCountRef = useRef(0);
@@ -51,7 +50,7 @@ function App() {
       });
 
       const data = await res.json();
-      setPrediction(data.label);
+      setPrediction(data.label || "");
     }, "image/jpeg");
   };
 
@@ -64,12 +63,17 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE LOGIC =================
+  // ================= SENTENCE LOGIC (FIXED) =================
   useEffect(() => {
+    if (tab !== "sentence") return;
+
+    console.log("Prediction:", prediction);
+
+    if (!prediction) return;
+
     const now = Date.now();
 
-    if (tab !== "sentence" || !prediction) return;
-
+    // Stability tracking
     if (prediction === stableRef.current) {
       stableCountRef.current += 1;
     } else {
@@ -77,14 +81,13 @@ function App() {
       stableCountRef.current = 1;
     }
 
+    // Relaxed stable detection
     if (
-      stableCountRef.current >= 3 &&
-      prediction !== lastAddedRef.current &&
-      now - lastTimeRef.current > 2000
+      stableCountRef.current >= 2 &&
+      now - lastTimeRef.current > 1500
     ) {
       setSentence((prev) => prev + prediction);
 
-      lastAddedRef.current = prediction;
       lastTimeRef.current = now;
       stableCountRef.current = 0;
     }
@@ -162,7 +165,7 @@ function App() {
             Start Camera
           </button>
 
-          <h2 className="output">Prediction: {prediction}</h2>
+          <h2>Prediction: {prediction}</h2>
         </div>
       )}
 
@@ -202,6 +205,8 @@ function App() {
           <button className="btn" onClick={startCamera}>
             Start Camera
           </button>
+
+          <h3>Live Prediction: {prediction}</h3>
 
           <h2 className="sentence">{sentence}</h2>
         </div>
