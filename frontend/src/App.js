@@ -3,6 +3,8 @@ import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
+// Added your newly trained phrases here:
+const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Food", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
 
 // Configuration
@@ -34,6 +36,9 @@ function App() {
   const wordStartTimeRef = useRef(0);
   const wordHandDetectedRef = useRef(false);
 
+  // Phrases Mode Refs
+  const phraseTargetRef = useRef("");
+
   // ================= STATES =================
   const [tab, setTabState] = useState("predict");
   const [prediction, setPrediction] = useState("");
@@ -53,6 +58,10 @@ function App() {
   const [wordProgress, setWordProgress] = useState(0);
   const [wordResults, setWordResults] = useState([]); // Tracks if each letter was right or wrong
   const [wordComplete, setWordComplete] = useState(false);
+
+  // Phrases State
+  const [phrase, setPhrase] = useState("");
+  const [phraseComplete, setPhraseComplete] = useState(false);
 
   // ================= HELPERS =================
   const setTab = (newTab) => {
@@ -129,9 +138,19 @@ function App() {
       const isSameAsLast = currentPred === lastAddedRef.current;
       const cooldownPassed = Date.now() - lastAddedTimeRef.current >= DOUBLE_LETTER_COOLDOWN;
 
-      // Only add letter if it's held for 3 frames AND (it's a new letter OR cooldown has passed)
+      // Only add letter/phrase if it's held for 3 frames AND (it's a new sign OR cooldown has passed)
       if (stableCountRef.current >= 3 && (!isSameAsLast || cooldownPassed)) {
-        setSentence((prev) => prev + currentPred);
+        
+        // Check if it's a full phrase or a single letter
+        if (PHRASES.includes(currentPred)) {
+          setSentence((prev) => {
+            const prefix = prev.length > 0 && !prev.endsWith(" ") ? " " : "";
+            return prev + prefix + currentPred + " "; // Add spaces around phrases
+          });
+        } else {
+          setSentence((prev) => prev + currentPred);
+        }
+
         lastAddedRef.current = currentPred;
         lastAddedTimeRef.current = Date.now();
         stableCountRef.current = 0;
@@ -157,7 +176,6 @@ function App() {
 
     // --- WORD/BEE LOGIC ---
     if (currentTab === "word" && wordActiveRef.current && !wordComplete) {
-      // Start the hidden 5-second timer for the word letter
       if (!wordHandDetectedRef.current) {
         wordHandDetectedRef.current = true;
         wordStartTimeRef.current = Date.now();
@@ -174,9 +192,31 @@ function App() {
         stableCountRef.current = 0;
       }
     }
+
+    // --- PHRASES LOGIC ---
+    if (currentTab === "phrases" && !phraseComplete && phrase) {
+      if (currentPred === phraseTargetRef.current) {
+        stableCountRef.current += 1;
+        // Phrases use sequence models, so holding for 2 frames is enough to confirm
+        if (stableCountRef.current >= 2) {
+          setPhraseComplete(true);
+        }
+      } else {
+        stableCountRef.current = 0;
+      }
+    }
   };
 
   // ================= FEATURE CONTROLS =================
+
+  // -- PHRASES --
+  const startPhraseMode = () => {
+    const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
+    setPhrase(randomPhrase);
+    phraseTargetRef.current = randomPhrase;
+    setPhraseComplete(false);
+    stableCountRef.current = 0;
+  };
   
   // -- WORD --
   const progressWord = useCallback((isCorrect) => {
@@ -222,7 +262,7 @@ function App() {
       {
         letter: quizTargetRef.current,
         correct: isCorrect,
-        time: isCorrect ? timeTaken : "Wrong", // Changed to Wrong
+        time: isCorrect ? timeTaken : "Wrong",
       },
     ]);
 
@@ -368,7 +408,8 @@ function App() {
       <h1 className="title">🤟 AI Sign Language Tutor</h1>
 
       <div className="tabs">
-        {["guide", "predict", "quiz", "word", "sentence"].map((t) => (
+        {/* Added "phrases" to the mapping array */}
+        {["guide", "predict", "quiz", "word", "phrases", "sentence"].map((t) => (
           <button
             key={t}
             className={`tab ${tab === t ? "active" : ""}`}
@@ -393,13 +434,37 @@ function App() {
 
       {/* GUIDE */}
       {tab === "guide" && (
-        <div className="grid">
-          {LETTERS.map((l) => (
-            <div key={l} className="card">
-              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
-              <p>{l}</p>
-            </div>
-          ))}
+        <div className="guide-container" style={{ padding: "20px", maxWidth: "900px", margin: "0 auto" }}>
+          
+          <h2 style={{ textAlign: "left", color: "#3b82f6", borderBottom: "2px solid #334155", paddingBottom: "10px" }}>
+            Common Phrases
+          </h2>
+          <div className="grid">
+            {PHRASES.map((p) => (
+              <div key={p} className="card">
+                {/* Images for phrases should use underscores instead of spaces, e.g., 'Thank_you.png' */}
+                <img 
+                  src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} 
+                  alt={`Sign ${p}`} 
+                  onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} 
+                />
+                <p style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#facc15" }}>{p}</p>
+              </div>
+            ))}
+          </div>
+
+          <h2 style={{ textAlign: "left", color: "#3b82f6", borderBottom: "2px solid #334155", paddingBottom: "10px", marginTop: "40px" }}>
+            Alphabet
+          </h2>
+          <div className="grid">
+            {LETTERS.map((l) => (
+              <div key={l} className="card">
+                <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
+                <p>{l}</p>
+              </div>
+            ))}
+          </div>
+
         </div>
       )}
 
@@ -427,7 +492,6 @@ function App() {
               <h2>Form the letter:</h2>
               <h1 className="target-letter">{target}</h1>
               <p>Question: {total + 1} / {MAX_Q} | Score: {score}</p>
-              {/* Changed Skip to Wrong text */}
               <button className="btn red" onClick={() => progressQuiz(false)}>Mark as Wrong</button>
             </div>
           )}
@@ -469,6 +533,27 @@ function App() {
                 })}
               </div>
               <p className="hint mt-20">You have 5 seconds per letter!</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PHRASES MODE (NEW) */}
+      {tab === "phrases" && (
+        <div className="center mt-20">
+          {!phrase ? (
+             <button className="btn blue" onClick={startPhraseMode}>Practice Phrases</button>
+          ) : phraseComplete ? (
+            <div className="result-card">
+              <h2>Awesome! You signed:</h2>
+              <h1 className="target-letter" style={{ fontSize: "2.5rem", color: "#22c55e" }}>{phrase}</h1>
+              <button className="btn blue mt-20" onClick={startPhraseMode}>Next Phrase</button>
+            </div>
+          ) : (
+            <div className="phrase-active">
+              <h2>Sign the phrase:</h2>
+              <h1 className="target-letter" style={{ fontSize: "3rem" }}>{phrase}</h1>
+              <p className="hint mt-20">Perform the action to complete the phrase.</p>
             </div>
           )}
         </div>
