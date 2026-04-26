@@ -202,7 +202,7 @@ video {
 }
 
 .row-correct { color: #22c55e; }
-.row-skipped { color: #ef4444; }
+.row-wrong { color: #ef4444; }
 
 /* ================= WORD / SPELLING BEE TAB ================= */
 .word-display {
@@ -232,6 +232,12 @@ video {
 .word-char.completed {
   background: #22c55e;
   color: white;
+}
+
+.word-char.wrong {
+  background: #ef4444;
+  color: white;
+  opacity: 0.8;
 }
 
 .word-display.success {
