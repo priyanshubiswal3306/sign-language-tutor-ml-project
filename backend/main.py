@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import tensorflow as tf
 import mediapipe as mp
+import tempfile
 import sys
 import os
 
@@ -24,17 +25,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model
-model = tf.keras.models.load_model("../models/landmark_model.keras")
-labels = np.load("../models/landmark_labels.npy")
+# ================= LOAD MODELS =================
+print("Loading models...")
+
+# 1. Static Model (Letters)
+static_model = tf.keras.models.load_model("../models/landmark_model.keras")
+static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
+
+# 2. Sequence Model (Phrases)
+sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
+sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
 
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands()
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=2,
+    min_detection_confidence=0.5
+)
+
+print("Models loaded successfully!")
 
 @app.get("/")
 def home():
     return {"message": "Backend running"}
 
+# ================= ENDPOINT 1: STATIC PREDICTION (LETTERS) =================
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
@@ -59,10 +74,77 @@ async def predict(file: UploadFile = File(...)):
                 row.extend([lm.x, lm.y, lm.z])
 
             if len(row) == 63:
+                # Custom normalizer logic used for static model
                 normalized = normalize_landmarks(row, is_left_hand=is_left)
                 data = np.array(normalized).reshape(1, -1)
 
-                preds = model.predict(data, verbose=0)
-                label = labels[np.argmax(preds)]
+                preds = static_model.predict(data, verbose=0)
+                label = str(static_labels[np.argmax(preds)])
 
     return {"label": label} 
+
+# ================= ENDPOINT 2: SEQUENCE PREDICTION (PHRASES) =================
+@app.post("/predict_sequence")
+async def predict_sequence(file: UploadFile = File(...)):
+    # 1. Save the incoming WebM video to a temporary file
+    temp_dir = tempfile.gettempdir()
+    temp_video_path = os.path.join(temp_dir, "temp_sequence.webm")
+    
+    with open(temp_video_path, "wb") as buffer:
+        buffer.write(await file.read())
+
+    # 2. Extract 30 frames using OpenCV (Mirroring your extract_sequences.py logic)
+    cap = cv2.VideoCapture(temp_video_path)
+    frames = []
+
+    while len(frames) < 30: # SEQ_LENGTH from your training script
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        frame = cv2.flip(frame, 1)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(rgb)
+        
+        row = []
+        if result.multi_hand_landmarks:
+            hands_detected = result.multi_hand_landmarks
+            # Sort hands left-to-right to match training
+            hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
+            
+            for i in range(2):
+                if i < len(hands_detected):
+                    lm = hands_detected[i]
+                    for p in lm.landmark:
+                        row.extend([p.x, p.y, p.z])
+                else:
+                    row.extend([0.0] * 63) # Pad missing hand
+        else:
+            row = [0.0] * 126 # Pad missing hands
+            
+        frames.append(row)
+    
+    cap.release()
+    
+    # Clean up temp file
+    if os.path.exists(temp_video_path):
+        os.remove(temp_video_path)
+        
+    # 3. Verify frame count
+    if len(frames) != 30:
+        return {"label": "", "error": f"Sequence too short ({len(frames)}/30)"}
+
+    # 4. Predict
+    sequence_data = np.array([frames]) # Shape: (1, 30, 126)
+    
+    prediction = sequence_model.predict(sequence_data, verbose=0)
+    class_index = np.argmax(prediction[0])
+    confidence = float(prediction[0][class_index])
+    
+    # Only return the label if confidence is high (> 70%)
+    if confidence > 0.7:
+        predicted_label = str(sequence_labels[class_index])
+    else:
+        predicted_label = ""
+        
+    return {"label": predicted_label, "confidence": confidence}
