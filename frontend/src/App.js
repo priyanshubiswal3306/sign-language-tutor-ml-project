@@ -19,9 +19,10 @@ function App() {
   const [target, setTarget] = useState("");
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
-  const [timer, setTimer] = useState(5);
-  const timerRef = useRef(null);
   const MAX_Q = 30;
+
+  const quizLockRef = useRef(false);
+  const quizTimeRef = useRef(0);
 
   // ================= CAMERA =================
   const startCamera = async () => {
@@ -29,7 +30,7 @@ function App() {
     videoRef.current.srcObject = stream;
   };
 
-  // ================= PREDICT =================
+  // ================= PREDICTION =================
   const predictFrame = async () => {
     if (!videoRef.current) return;
 
@@ -63,7 +64,7 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE STABILITY =================
+  // ================= SENTENCE LOGIC =================
   useEffect(() => {
     const now = Date.now();
 
@@ -77,9 +78,9 @@ function App() {
     }
 
     if (
-      stableCountRef.current > 3 &&
+      stableCountRef.current >= 3 &&
       prediction !== lastAddedRef.current &&
-      now - lastTimeRef.current > 1500
+      now - lastTimeRef.current > 2000
     ) {
       setSentence((prev) => prev + prediction);
 
@@ -93,39 +94,29 @@ function App() {
   const startQuiz = () => {
     setScore(0);
     setTotal(0);
-    nextQuestion();
-  };
-
-  const nextQuestion = () => {
     setTarget(letters[Math.floor(Math.random() * letters.length)]);
-    setTimer(5);
-
-    clearInterval(timerRef.current);
-
-    timerRef.current = setInterval(() => {
-      setTimer((t) => {
-        if (t <= 1) {
-          clearInterval(timerRef.current);
-          setTotal((prev) => prev + 1); // wrong
-          nextQuestion();
-          return 5;
-        }
-        return t - 1;
-      });
-    }, 1000);
+    quizLockRef.current = false;
   };
 
-  // Check correct answer
   useEffect(() => {
-    if (tab === "quiz" && prediction && target && total < MAX_Q) {
+    const now = Date.now();
+
+    if (tab !== "quiz" || !prediction || total >= MAX_Q) return;
+
+    if (!quizLockRef.current) {
+      quizLockRef.current = true;
+      quizTimeRef.current = now;
+    }
+
+    if (now - quizTimeRef.current > 2000) {
       if (prediction === target) {
-        clearInterval(timerRef.current);
-
         setScore((s) => s + 1);
-        setTotal((t) => t + 1);
-
-        nextQuestion();
       }
+
+      setTotal((t) => t + 1);
+
+      setTarget(letters[Math.floor(Math.random() * letters.length)]);
+      quizLockRef.current = false;
     }
   }, [prediction, tab]);
 
@@ -191,7 +182,6 @@ function App() {
           </button>
 
           <h2>Target: {target}</h2>
-          <h2>⏱ Time Left: {timer}s</h2>
           <h2>Score: {score}/{total}</h2>
 
           {total >= MAX_Q && (
