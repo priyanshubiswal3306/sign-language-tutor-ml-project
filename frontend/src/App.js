@@ -9,9 +9,10 @@ function App() {
 
   // ================= SENTENCE =================
   const [sentence, setSentence] = useState("");
-  const stableRef = useRef("");
-  const holdStartRef = useRef(0);
   const lastAddedRef = useRef("");
+  const stableRef = useRef("");
+  const stableCountRef = useRef(0);
+  const lastTimeRef = useRef(0);
 
   // ================= QUIZ =================
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -58,44 +59,57 @@ function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       predictFrame();
-    }, 800);
+    }, 700);
 
     return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE LOGIC (FINAL FIX) =================
+  // ================= SENTENCE LOGIC (STREAMLIT STYLE) =================
   useEffect(() => {
     if (tab !== "sentence") return;
     if (!prediction) return;
 
     const now = Date.now();
 
-    console.log("Prediction:", prediction);
-
+    // stability tracking
     if (prediction === stableRef.current) {
-      // start hold timer if not started
-      if (holdStartRef.current === 0) {
-        holdStartRef.current = now;
-      }
-
-      // if held long enough → accept
-      if (
-        now - holdStartRef.current > 1200 &&
-        prediction !== lastAddedRef.current
-      ) {
-        setSentence((prev) => prev + prediction);
-
-        lastAddedRef.current = prediction;
-
-        // reset
-        holdStartRef.current = 0;
-        stableRef.current = "";
-      }
+      stableCountRef.current += 1;
     } else {
       stableRef.current = prediction;
-      holdStartRef.current = now;
+      stableCountRef.current = 1;
+    }
+
+    // stable detection + cooldown + no repeat
+    if (
+      stableCountRef.current >= 3 && // stability
+      prediction !== lastAddedRef.current && // no duplicate
+      now - lastTimeRef.current > 800 // cooldown
+    ) {
+      setSentence((prev) => prev + prediction);
+
+      lastAddedRef.current = prediction;
+      lastTimeRef.current = now;
     }
   }, [prediction, tab]);
+
+  // ================= KEYBOARD SUPPORT =================
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (tab !== "sentence") return;
+
+      if (e.key === " ") {
+        setSentence((prev) => prev + " ");
+      }
+
+      if (e.key === "Backspace") {
+        setSentence((prev) => prev.slice(0, -1));
+      }
+    };
+
+    window.addEventListener("keydown", handleKey);
+
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [tab]);
 
   // ================= QUIZ =================
   const startQuiz = () => {
@@ -133,7 +147,6 @@ function App() {
 
       <h1 className="title">🤟 AI Sign Language Tutor</h1>
 
-      {/* TABS */}
       <div className="tabs">
         {["guide", "predict", "quiz", "sentence"].map((t) => (
           <button
@@ -213,6 +226,10 @@ function App() {
           <h3>Live Prediction: {prediction || "None"}</h3>
 
           <h2 className="sentence">{sentence}</h2>
+
+          <p style={{ opacity: 0.7 }}>
+            Press SPACE for space, BACKSPACE to delete
+          </p>
 
           <button className="btn red" onClick={() => setSentence("")}>
             Clear
