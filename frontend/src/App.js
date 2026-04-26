@@ -1,43 +1,64 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import "./App.css";
 
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+const MAX_Q = 30;
+
 function App() {
+  // ================= REFS =================
   const videoRef = useRef(null);
+  const tabRef = useRef("predict"); // Keeps track of tab inside intervals
 
-  const [tab, setTab] = useState("predict");
-  const [prediction, setPrediction] = useState("");
-
-  // ================= SENTENCE =================
-  const [sentence, setSentence] = useState("");
-  const stableRef = useRef("");
+  // Sentence Refs
+  const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
-  const lastTimeRef = useRef(0);
 
-  // ================= QUIZ =================
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-  const [target, setTarget] = useState("");
+  // Quiz Refs
+  const quizActiveRef = useRef(false);
+  const quizTargetRef = useRef("");
+
+  // ================= STATES =================
+  const [tab, setTabState] = useState("predict");
+  const [prediction, setPrediction] = useState("");
+  const [isCameraRunning, setIsCameraRunning] = useState(false);
+
+  // Sentence State
+  const [sentence, setSentence] = useState("");
+
+  // Quiz State
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
-  const MAX_Q = 30;
+  const [target, setTarget] = useState("");
 
-  const quizLockRef = useRef(false);
-  const quizStartRef = useRef(0);
+  // ================= HELPERS =================
+  const setTab = (newTab) => {
+    setTabState(newTab);
+    tabRef.current = newTab; // Update ref for the interval loop
+  };
 
   // ================= CAMERA =================
   const startCamera = async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    videoRef.current.srcObject = stream;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setIsCameraRunning(true);
+      }
+    } catch (err) {
+      console.error("Failed to start camera:", err);
+      alert("Please allow camera access.");
+    }
   };
 
-  // ================= PREDICTION =================
-  const predictFrame = async () => {
-    if (!videoRef.current) return;
+  // ================= PREDICTION & LOGIC LOOP =================
+  const processFrame = useCallback(async () => {
+    if (!videoRef.current || videoRef.current.readyState < 2) return;
 
+    // 1. Grab Frame
     const canvas = document.createElement("canvas");
     canvas.width = 300;
     canvas.height = 300;
-
     const ctx = canvas.getContext("2d");
     ctx.drawImage(videoRef.current, 0, 0, 300, 300);
 
@@ -45,103 +66,121 @@ function App() {
       const formData = new FormData();
       formData.append("file", blob);
 
-      const res = await fetch("http://127.0.0.1:8000/predict", {
-        method: "POST",
-        body: formData,
-      });
+      try {
+        const res = await fetch("http://127.0.0.1:8000/predict", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        const currentPred = data.label ? data.label.trim() : "";
+        
+        setPrediction(currentPred);
 
-      const data = await res.json();
-      setPrediction(data.label ? data.label.trim() : "");
+        // 2. Route logic based on current tab
+        if (currentPred) {
+          handleAppLogic(currentPred);
+        }
+      } catch (error) {
+        console.error("Prediction API Error:", error);
+      }
     }, "image/jpeg");
-  };
-
-  // ================= GLOBAL LOOP =================
-  useEffect(() => {
-    const interval = setInterval(() => {
-      predictFrame();
-    }, 600);
-
-    return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE LOGIC =================
+  const handleAppLogic = (currentPred) => {
+    const currentTab = tabRef.current;
+
+    // --- SENTENCE LOGIC ---
+    if (currentTab === "sentence") {
+      if (currentPred === stableCharRef.current) {
+        stableCountRef.current += 1;
+      } else {
+        stableCharRef.current = currentPred;
+        stableCountRef.current = 1;
+      }
+
+      // If held for 3 frames (~1.8 seconds) and isn't the exact same letter we just added
+      if (stableCountRef.current >= 3 && currentPred !== lastAddedRef.current) {
+        setSentence((prev) => prev + currentPred);
+        lastAddedRef.current = currentPred;
+        stableCountRef.current = 0; // Reset
+      }
+    }
+
+    // --- QUIZ LOGIC ---
+    if (currentTab === "quiz" && quizActiveRef.current) {
+      if (currentPred === quizTargetRef.current) {
+        // They got it right! Hold for 2 frames to confirm.
+        stableCountRef.current += 1;
+        if (stableCountRef.current >= 2) {
+          handleQuizCorrect();
+        }
+      } else {
+        stableCountRef.current = 0; // Reset if they drop the sign
+      }
+    }
+  };
+
+  // ================= GLOBAL INTERVAL =================
   useEffect(() => {
-    if (tab !== "sentence") return;
-    if (!prediction) return;
-
-    const now = Date.now();
-
-    // stability tracking
-    if (prediction === stableRef.current) {
-      stableCountRef.current += 1;
-    } else {
-      stableRef.current = prediction;
-      stableCountRef.current = 1;
+    let interval;
+    if (isCameraRunning && tab !== "guide") {
+      interval = setInterval(() => {
+        processFrame();
+      }, 600);
     }
+    return () => clearInterval(interval);
+  }, [isCameraRunning, tab, processFrame]);
 
-    // stable detection
-    if (
-      stableCountRef.current >= 3 &&
-      prediction !== lastAddedRef.current &&
-      now - lastTimeRef.current > 800
-    ) {
-      setSentence((prev) => prev + prediction);
-
-      lastAddedRef.current = prediction;
-      lastTimeRef.current = now;
-    }
-  }, [prediction, tab]);
-
-  // ================= KEYBOARD =================
+  // ================= KEYBOARD (Sentence Tab) =================
   useEffect(() => {
     const handleKey = (e) => {
-      if (tab !== "sentence") return;
+      if (tabRef.current !== "sentence") return;
 
       if (e.key === " ") {
         setSentence((prev) => prev + " ");
-      }
-
-      if (e.key === "Backspace") {
+        lastAddedRef.current = ""; // allow double letters after space
+      } else if (e.key === "Backspace") {
         setSentence((prev) => prev.slice(0, -1));
+        lastAddedRef.current = ""; 
       }
     };
 
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [tab]);
+  }, []);
 
-  // ================= QUIZ =================
+  // ================= QUIZ CONTROLS =================
   const startQuiz = () => {
     setScore(0);
     setTotal(0);
-    setTarget(letters[Math.floor(Math.random() * letters.length)]);
-    quizLockRef.current = false;
+    nextQuestion();
+    quizActiveRef.current = true;
   };
 
-  useEffect(() => {
-    if (tab !== "quiz") return;
-    if (!prediction || total >= MAX_Q) return;
-
-    const now = Date.now();
-
-    if (!quizLockRef.current) {
-      quizLockRef.current = true;
-      quizStartRef.current = now;
+  const nextQuestion = () => {
+    if (total >= MAX_Q - 1) {
+      quizActiveRef.current = false;
+      setTotal((prev) => prev + 1); // Trigger end screen
+      return;
     }
+    const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    setTarget(randomLetter);
+    quizTargetRef.current = randomLetter;
+    stableCountRef.current = 0;
+  };
 
-    if (now - quizStartRef.current > 2000) {
-      if (prediction === target) {
-        setScore((s) => s + 1);
-      }
+  const handleQuizCorrect = () => {
+    setScore((s) => s + 1);
+    setTotal((t) => t + 1);
+    nextQuestion();
+  };
 
-      setTotal((t) => t + 1);
+  const skipQuestion = () => {
+    setTotal((t) => t + 1);
+    nextQuestion();
+  };
 
-      setTarget(letters[Math.floor(Math.random() * letters.length)]);
-      quizLockRef.current = false;
-    }
-  }, [prediction, tab]);
-
-  // ================= UI =================
+  // ================= UI RENDER =================
   return (
     <div className="app">
       <h1 className="title">🤟 AI Sign Language Tutor</h1>
@@ -158,25 +197,28 @@ function App() {
         ))}
       </div>
 
-      {/* CAMERA + LIVE PREDICTION (shared UI only) */}
       <div className="center">
-        <div className="camera">
-          <video ref={videoRef} autoPlay />
+        <div className="camera-container">
+          <video ref={videoRef} autoPlay playsInline muted />
+          {!isCameraRunning && (
+            <div className="camera-placeholder">
+              <button className="btn" onClick={startCamera}>
+                Start Camera
+              </button>
+            </div>
+          )}
         </div>
-
-        <button className="btn" onClick={startCamera}>
-          Start Camera
-        </button>
-
-        <h3>Live Prediction: {prediction || "None"}</h3>
+        {isCameraRunning && tab !== "guide" && (
+          <h3 className="live-pred">Live: {prediction || "..."}</h3>
+        )}
       </div>
 
       {/* GUIDE */}
       {tab === "guide" && (
         <div className="grid">
-          {letters.map((l) => (
+          {LETTERS.map((l) => (
             <div key={l} className="card">
-              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={l} />
+              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
               <p>{l}</p>
             </div>
           ))}
@@ -185,38 +227,50 @@ function App() {
 
       {/* PREDICT */}
       {tab === "predict" && (
-        <h2 className="output">Prediction: {prediction}</h2>
+        <div className="center mt-20">
+          <h2 className="output">Result: {prediction || "Show a sign"}</h2>
+        </div>
       )}
 
       {/* QUIZ */}
       {tab === "quiz" && (
-        <div className="center">
-          <h2>Target: {target}</h2>
-          <h2>Score: {score}/{total}</h2>
-
-          <button className="btn blue" onClick={startQuiz}>
-            Start Quiz
-          </button>
-
-          {total >= MAX_Q && (
-            <h2 className="result">
-              Final Score: {score}/{MAX_Q}
-            </h2>
+        <div className="center mt-20">
+          {!quizActiveRef.current && total < MAX_Q ? (
+            <button className="btn blue" onClick={startQuiz}>
+              Start 30-Question Quiz
+            </button>
+          ) : total >= MAX_Q ? (
+            <div className="result-card">
+              <h2>Quiz Complete!</h2>
+              <h1 className="score-text">{score} / {MAX_Q}</h1>
+              <button className="btn blue" onClick={startQuiz}>Play Again</button>
+            </div>
+          ) : (
+            <div className="quiz-active">
+              <h2>Form the letter:</h2>
+              <h1 className="target-letter">{target}</h1>
+              <p>Question: {total + 1} / {MAX_Q} | Score: {score}</p>
+              <button className="btn red" onClick={skipQuestion}>Skip Letter</button>
+            </div>
           )}
         </div>
       )}
 
       {/* SENTENCE */}
       {tab === "sentence" && (
-        <div className="center">
-          <h2 className="sentence">{sentence}</h2>
-
+        <div className="center mt-20">
+          <div className="sentence-box">
+            <h2 className="sentence">{sentence}</h2>
+            {!sentence && <span className="placeholder-text">Begin signing to type...</span>}
+          </div>
           <p className="hint">
-            SPACE = space | BACKSPACE = delete
+            Hold sign to type • Press <strong>SPACE</strong> for gap • Press <strong>BACKSPACE</strong> to delete
           </p>
-
-          <button className="btn red" onClick={() => setSentence("")}>
-            Clear
+          <button className="btn red" onClick={() => {
+            setSentence("");
+            lastAddedRef.current = "";
+          }}>
+            Clear Sentence
           </button>
         </div>
       )}

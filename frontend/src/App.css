@@ -1,69 +1,168 @@
 body {
   margin: 0;
-  font-family: Arial;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: linear-gradient(135deg, #0f172a, #1e293b);
   color: white;
+  min-height: 100vh;
 }
 
 .title {
   text-align: center;
   margin: 20px;
+  font-size: 2rem;
 }
 
 .tabs {
   display: flex;
   justify-content: center;
   gap: 10px;
+  margin-bottom: 30px;
+  flex-wrap: wrap;
 }
 
 .tab {
-  padding: 10px 20px;
+  padding: 10px 25px;
   border-radius: 20px;
   border: none;
   background: #334155;
   color: white;
+  font-weight: bold;
   cursor: pointer;
+  transition: background 0.3s;
+}
+
+.tab:hover {
+  background: #475569;
 }
 
 .tab.active {
   background: #3b82f6;
 }
 
-.camera {
-  background: rgba(255,255,255,0.05);
-  padding: 15px;
+.center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.mt-20 {
+  margin-top: 20px;
+}
+
+/* Camera Area */
+.camera-container {
+  position: relative;
+  width: 300px;
+  height: 300px;
+  background: rgba(255, 255, 255, 0.05);
   border-radius: 15px;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 2px dashed #475569;
 }
 
 video {
-  width: 300px;
-  border-radius: 10px;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
-.btn {
+.camera-placeholder {
+  position: absolute;
+}
+
+.live-pred {
   margin-top: 10px;
-  padding: 10px 20px;
+  color: #94a3b8;
+  font-weight: normal;
+}
+
+/* Buttons */
+.btn {
+  padding: 12px 24px;
   border-radius: 10px;
   background: #22c55e;
   border: none;
   color: white;
+  font-size: 1rem;
+  font-weight: bold;
   cursor: pointer;
+  margin: 5px;
 }
 
-.btn.red {
-  background: #ef4444;
+.btn.red { background: #ef4444; }
+.btn.blue { background: #3b82f6; }
+
+/* Guide Grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 15px;
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-.center {
+.card {
+  background: #334155;
+  padding: 10px;
+  border-radius: 10px;
   text-align: center;
 }
 
+.card img {
+  width: 100%;
+  border-radius: 5px;
+}
+
+/* Quiz */
+.target-letter {
+  font-size: 4rem;
+  color: #facc15;
+  margin: 10px 0;
+}
+
+.score-text {
+  font-size: 3rem;
+  color: #22c55e;
+}
+
+.result-card {
+  background: #1e293b;
+  padding: 30px;
+  border-radius: 15px;
+  border: 1px solid #334155;
+}
+
+/* Sentence */
+.sentence-box {
+  min-width: 300px;
+  min-height: 60px;
+  background: #1e293b;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  border: 1px solid #334155;
+}
+
 .sentence {
-  margin-top: 20px;
   font-size: 28px;
   color: #facc15;
+  margin: 0;
+  letter-spacing: 2px;
+}
+
+.placeholder-text {
+  color: #64748b;
+  font-style: italic;
 }
 
 .hint {
   opacity: 0.7;
+  font-size: 0.9rem;
 }
