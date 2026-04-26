@@ -1,66 +1,65 @@
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
-  background: #0f172a;
+  font-family: Arial;
+  background: linear-gradient(135deg, #0f172a, #1e293b);
   color: white;
 }
 
-/* Header */
-.header {
+.title {
   text-align: center;
-  font-size: 28px;
-  font-weight: bold;
   margin: 20px;
 }
 
-/* Tabs */
 .tabs {
   display: flex;
   justify-content: center;
   gap: 10px;
-  margin-bottom: 20px;
 }
 
-.tab-btn {
+.tab {
   padding: 10px 20px;
-  border-radius: 10px;
+  border-radius: 20px;
   border: none;
-  background: #1e293b;
+  background: #334155;
   color: white;
   cursor: pointer;
 }
 
-.tab-btn.active {
+.tab.active {
   background: #3b82f6;
 }
 
-/* Camera Card */
-.camera-card {
-  background: #1e293b;
-  padding: 20px;
+.camera {
+  background: rgba(255,255,255,0.05);
+  padding: 15px;
   border-radius: 15px;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
 }
 
-/* Buttons */
+video {
+  width: 300px;
+  border-radius: 10px;
+}
+
 .btn {
   margin-top: 10px;
   padding: 10px 20px;
-  border: none;
   border-radius: 10px;
   background: #22c55e;
+  border: none;
   color: white;
-  cursor: pointer;
 }
 
-/* Grid */
+.btn.blue {
+  background: #3b82f6;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 15px;
+  padding: 20px;
 }
 
-/* Guide card */
 .card {
   background: white;
   color: black;
@@ -71,4 +70,23 @@ body {
 
 .card img {
   height: 100px;
+}
+
+.center {
+  text-align: center;
+}
+
+.output {
+  margin-top: 15px;
+}
+
+.sentence {
+  margin-top: 20px;
+  font-size: 24px;
+  color: #facc15;
+}
+
+.result {
+  margin-top: 20px;
+  color: #22c55e;
 }
