@@ -8,13 +8,13 @@ import mediapipe as mp
 import sys
 import os
 
-# 🔥 Fix imports from root project
+# Fix import path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.utils.landmark_normalizer import normalize_landmarks
 
 app = FastAPI()
 
-# 🔥 Allow React to connect
+# CORS (for React)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,7 +29,7 @@ app.add_middleware(
 letter_model = tf.keras.models.load_model("../models/landmark_model.keras")
 letter_labels = np.load("../models/landmark_labels.npy")
 
-# 🔥 NEW: Sequence model
+# Sequence model (new)
 sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
 sequence_labels = np.load("../models/sequence_labels.npy")
 
@@ -41,7 +41,6 @@ hands = mp_hands.Hands(max_num_hands=2)
 sequence_buffer = []
 SEQ_LENGTH = 30
 
-# ================= ROUTES =================
 @app.get("/")
 def home():
     return {"message": "Backend running"}
@@ -65,7 +64,7 @@ async def predict(file: UploadFile = File(...)):
     if results.multi_hand_landmarks:
         hands_detected = results.multi_hand_landmarks
 
-        # sort hands (left-right consistency)
+        # Sort hands (left-right consistency)
         hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
 
         row = []
@@ -78,7 +77,6 @@ async def predict(file: UploadFile = File(...)):
                 for p in lm.landmark:
                     temp.extend([p.x, p.y, p.z])
 
-                # normalize EACH hand
                 temp = normalize_landmarks(temp, is_left_hand=False)
                 row.extend(temp)
             else:
@@ -87,9 +85,8 @@ async def predict(file: UploadFile = File(...)):
         if len(row) == 126:
             normalized_landmarks = row
 
-            # ================= LETTER MODEL =================
-            data = np.array(row[:63]).reshape(1, -1)  # use first hand for letters
-
+            # ===== LETTER MODEL =====
+            data = np.array(row[:63]).reshape(1, -1)
             preds = letter_model.predict(data, verbose=0)
             letter_label = letter_labels[np.argmax(preds)]
 
@@ -102,7 +99,12 @@ async def predict(file: UploadFile = File(...)):
         if len(sequence_buffer) > SEQ_LENGTH:
             sequence_buffer.pop(0)
 
+        # 🔥 DEBUG: buffer size
+        print("Buffer size:", len(sequence_buffer))
+
         if len(sequence_buffer) == SEQ_LENGTH:
+            print("Sequence buffer full")
+
             seq_input = np.array(sequence_buffer).reshape(1, SEQ_LENGTH, 126)
 
             preds = sequence_model.predict(seq_input, verbose=0)
@@ -110,10 +112,15 @@ async def predict(file: UploadFile = File(...)):
             confidence = np.max(preds)
             label_index = np.argmax(preds)
 
-            if confidence > 0.85:
+            print("Sequence prediction:", sequence_labels[label_index], "Confidence:", confidence)
+
+            # 🔥 LOWER THRESHOLD (IMPORTANT)
+            if confidence > 0.6:
                 sequence_prediction = sequence_labels[label_index]
 
-                # 🔥 prevent repeated triggering
+                print("FINAL SEQUENCE OUTPUT:", sequence_prediction)
+
+                # Reset buffer to avoid spam
                 sequence_buffer.clear()
 
     # ================= FINAL OUTPUT =================
