@@ -4,25 +4,16 @@ import "./App.css";
 function App() {
   const videoRef = useRef(null);
 
-  const [tab, setTab] = useState("predict");
+  const [tab, setTab] = useState("sentence");
   const [prediction, setPrediction] = useState("");
-
-  // ================= SENTENCE =================
   const [sentence, setSentence] = useState("");
+
+  // ================= BUFFER (KEY FIX) =================
+  const bufferRef = useRef([]);
+  const BUFFER_SIZE = 5;
+
   const lastAddedRef = useRef("");
-  const stableRef = useRef("");
-  const stableCountRef = useRef(0);
-  const lastTimeRef = useRef(0);
-
-  // ================= QUIZ =================
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-  const [target, setTarget] = useState("");
-  const [score, setScore] = useState(0);
-  const [total, setTotal] = useState(0);
-  const MAX_Q = 30;
-
-  const quizLockRef = useRef(false);
-  const quizTimeRef = useRef(0);
+  const cooldownRef = useRef(false);
 
   // ================= CAMERA =================
   const startCamera = async () => {
@@ -30,7 +21,7 @@ function App() {
     videoRef.current.srcObject = stream;
   };
 
-  // ================= PREDICTION =================
+  // ================= PREDICT =================
   const predictFrame = async () => {
     if (!videoRef.current) return;
 
@@ -59,37 +50,64 @@ function App() {
   useEffect(() => {
     const interval = setInterval(() => {
       predictFrame();
-    }, 700);
+    }, 500);
 
     return () => clearInterval(interval);
   }, []);
 
-  // ================= SENTENCE LOGIC (STREAMLIT STYLE) =================
+  // ================= STABLE PREDICTION =================
+  const getStablePrediction = () => {
+    const counts = {};
+    bufferRef.current.forEach((p) => {
+      if (!p) return;
+      counts[p] = (counts[p] || 0) + 1;
+    });
+
+    let max = 0;
+    let best = "";
+
+    for (let key in counts) {
+      if (counts[key] > max) {
+        max = counts[key];
+        best = key;
+      }
+    }
+
+    // require majority
+    if (max >= 3) return best;
+
+    return "";
+  };
+
+  // ================= SENTENCE LOGIC (FINAL FIX) =================
   useEffect(() => {
     if (tab !== "sentence") return;
-    if (!prediction) return;
 
-    const now = Date.now();
-
-    // stability tracking
-    if (prediction === stableRef.current) {
-      stableCountRef.current += 1;
-    } else {
-      stableRef.current = prediction;
-      stableCountRef.current = 1;
+    // update buffer
+    bufferRef.current.push(prediction);
+    if (bufferRef.current.length > BUFFER_SIZE) {
+      bufferRef.current.shift();
     }
 
-    // stable detection + cooldown + no repeat
-    if (
-      stableCountRef.current >= 3 && // stability
-      prediction !== lastAddedRef.current && // no duplicate
-      now - lastTimeRef.current > 800 // cooldown
-    ) {
-      setSentence((prev) => prev + prediction);
+    const stable = getStablePrediction();
 
-      lastAddedRef.current = prediction;
-      lastTimeRef.current = now;
-    }
+    if (!stable) return;
+
+    // prevent duplicate spam
+    if (stable === lastAddedRef.current) return;
+
+    if (cooldownRef.current) return;
+
+    // ADD LETTER
+    setSentence((prev) => prev + stable);
+
+    lastAddedRef.current = stable;
+
+    // cooldown (prevents fast repeats)
+    cooldownRef.current = true;
+    setTimeout(() => {
+      cooldownRef.current = false;
+    }, 800);
   }, [prediction, tab]);
 
   // ================= KEYBOARD SUPPORT =================
@@ -107,39 +125,8 @@ function App() {
     };
 
     window.addEventListener("keydown", handleKey);
-
     return () => window.removeEventListener("keydown", handleKey);
   }, [tab]);
-
-  // ================= QUIZ =================
-  const startQuiz = () => {
-    setScore(0);
-    setTotal(0);
-    setTarget(letters[Math.floor(Math.random() * letters.length)]);
-    quizLockRef.current = false;
-  };
-
-  useEffect(() => {
-    const now = Date.now();
-
-    if (tab !== "quiz" || !prediction || total >= MAX_Q) return;
-
-    if (!quizLockRef.current) {
-      quizLockRef.current = true;
-      quizTimeRef.current = now;
-    }
-
-    if (now - quizTimeRef.current > 2000) {
-      if (prediction === target) {
-        setScore((s) => s + 1);
-      }
-
-      setTotal((t) => t + 1);
-
-      setTarget(letters[Math.floor(Math.random() * letters.length)]);
-      quizLockRef.current = false;
-    }
-  }, [prediction, tab]);
 
   // ================= UI =================
   return (
@@ -159,76 +146,26 @@ function App() {
         ))}
       </div>
 
-      {/* GUIDE */}
-      {tab === "guide" && (
-        <div className="grid">
-          {letters.map((l) => (
-            <div key={l} className="card">
-              <img src={`/data/guide_images/Sign_language_${l}.png`} alt={l} />
-              <p>{l}</p>
-            </div>
-          ))}
+      {/* CAMERA */}
+      <div className="center">
+        <div className="camera">
+          <video ref={videoRef} autoPlay />
         </div>
-      )}
 
-      {/* PREDICT */}
-      {tab === "predict" && (
-        <div className="center">
-          <div className="camera">
-            <video ref={videoRef} autoPlay />
-          </div>
+        <button className="btn" onClick={startCamera}>
+          Start Camera
+        </button>
 
-          <button className="btn" onClick={startCamera}>
-            Start Camera
-          </button>
-
-          <h2>Prediction: {prediction || "None"}</h2>
-        </div>
-      )}
-
-      {/* QUIZ */}
-      {tab === "quiz" && (
-        <div className="center">
-          <div className="camera">
-            <video ref={videoRef} autoPlay />
-          </div>
-
-          <button className="btn" onClick={startCamera}>
-            Start Camera
-          </button>
-
-          <button className="btn blue" onClick={startQuiz}>
-            Start Quiz
-          </button>
-
-          <h2>Target: {target}</h2>
-          <h2>Score: {score}/{total}</h2>
-
-          {total >= MAX_Q && (
-            <h2 className="result">
-              Final Score: {score}/{MAX_Q}
-            </h2>
-          )}
-        </div>
-      )}
+        <h3>Live Prediction: {prediction || "None"}</h3>
+      </div>
 
       {/* SENTENCE */}
       {tab === "sentence" && (
         <div className="center">
-          <div className="camera">
-            <video ref={videoRef} autoPlay />
-          </div>
-
-          <button className="btn" onClick={startCamera}>
-            Start Camera
-          </button>
-
-          <h3>Live Prediction: {prediction || "None"}</h3>
-
           <h2 className="sentence">{sentence}</h2>
 
-          <p style={{ opacity: 0.7 }}>
-            Press SPACE for space, BACKSPACE to delete
+          <p className="hint">
+            Space = SPACE key | Delete = BACKSPACE
           </p>
 
           <button className="btn red" onClick={() => setSentence("")}>
