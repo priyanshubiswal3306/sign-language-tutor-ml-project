@@ -14,7 +14,7 @@ from src.utils.landmark_normalizer import normalize_landmarks
 
 app = FastAPI()
 
-# CORS (for React)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,11 +25,11 @@ app.add_middleware(
 
 # ================= LOAD MODELS =================
 
-# Letter model (existing)
+# Letter model
 letter_model = tf.keras.models.load_model("../models/landmark_model.keras")
 letter_labels = np.load("../models/landmark_labels.npy")
 
-# Sequence model (new)
+# Phrase model
 sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
 sequence_labels = np.load("../models/sequence_labels.npy")
 
@@ -45,8 +45,42 @@ SEQ_LENGTH = 30
 def home():
     return {"message": "Backend running"}
 
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+# =========================================================
+# 🔤 LETTER PREDICTION (UNCHANGED)
+# =========================================================
+@app.post("/predict-letter")
+async def predict_letter(file: UploadFile = File(...)):
+    contents = await file.read()
+
+    np_arr = np.frombuffer(contents, np.uint8)
+    frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(rgb)
+
+    label = ""
+
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            row = []
+            for lm in hand_landmarks.landmark:
+                row.extend([lm.x, lm.y, lm.z])
+
+            if len(row) == 63:
+                normalized = normalize_landmarks(row, is_left_hand=False)
+                data = np.array(normalized).reshape(1, -1)
+
+                preds = letter_model.predict(data, verbose=0)
+                label = letter_labels[np.argmax(preds)]
+
+    return {"label": label}
+
+
+# =========================================================
+# ✋ PHRASE (SEQUENCE MODEL)
+# =========================================================
+@app.post("/predict-phrase")
+async def predict_phrase(file: UploadFile = File(...)):
     global sequence_buffer
 
     contents = await file.read()
@@ -57,14 +91,8 @@ async def predict(file: UploadFile = File(...)):
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb)
 
-    letter_label = ""
-    normalized_landmarks = None
-
-    # ================= LANDMARK EXTRACTION =================
     if results.multi_hand_landmarks:
         hands_detected = results.multi_hand_landmarks
-
-        # Sort hands (left-right consistency)
         hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
 
         row = []
@@ -83,48 +111,26 @@ async def predict(file: UploadFile = File(...)):
                 row.extend([0.0] * 63)
 
         if len(row) == 126:
-            normalized_landmarks = row
+            sequence_buffer.append(row)
 
-            # ===== LETTER MODEL =====
-            data = np.array(row[:63]).reshape(1, -1)
-            preds = letter_model.predict(data, verbose=0)
-            letter_label = letter_labels[np.argmax(preds)]
+            if len(sequence_buffer) > SEQ_LENGTH:
+                sequence_buffer.pop(0)
 
-    # ================= SEQUENCE MODEL =================
-    sequence_prediction = None
+            # DEBUG
+            print("Buffer:", len(sequence_buffer))
 
-    if normalized_landmarks is not None:
-        sequence_buffer.append(normalized_landmarks)
+            if len(sequence_buffer) == SEQ_LENGTH:
+                seq_input = np.array(sequence_buffer).reshape(1, SEQ_LENGTH, 126)
 
-        if len(sequence_buffer) > SEQ_LENGTH:
-            sequence_buffer.pop(0)
+                preds = sequence_model.predict(seq_input, verbose=0)
 
-        # 🔥 DEBUG: buffer size
-        print("Buffer size:", len(sequence_buffer))
+                confidence = np.max(preds)
+                label_index = np.argmax(preds)
 
-        if len(sequence_buffer) == SEQ_LENGTH:
-            print("Sequence buffer full")
+                print("Phrase:", sequence_labels[label_index], "Conf:", confidence)
 
-            seq_input = np.array(sequence_buffer).reshape(1, SEQ_LENGTH, 126)
+                if confidence > 0.6:
+                    sequence_buffer.clear()
+                    return {"label": sequence_labels[label_index]}
 
-            preds = sequence_model.predict(seq_input, verbose=0)
-
-            confidence = np.max(preds)
-            label_index = np.argmax(preds)
-
-            print("Sequence prediction:", sequence_labels[label_index], "Confidence:", confidence)
-
-            # 🔥 LOWER THRESHOLD (IMPORTANT)
-            if confidence > 0.6:
-                sequence_prediction = sequence_labels[label_index]
-
-                print("FINAL SEQUENCE OUTPUT:", sequence_prediction)
-
-                # Reset buffer to avoid spam
-                sequence_buffer.clear()
-
-    # ================= FINAL OUTPUT =================
-    if sequence_prediction:
-        return {"label": sequence_prediction}
-
-    return {"label": letter_label}
+    return {"label": ""}
