@@ -7,7 +7,7 @@ const MAX_Q = 30;
 function App() {
   // ================= REFS =================
   const videoRef = useRef(null);
-  const tabRef = useRef("predict"); // Keeps track of tab inside intervals
+  const tabRef = useRef("predict");
 
   // Sentence Refs
   const stableCharRef = useRef("");
@@ -17,6 +17,7 @@ function App() {
   // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
+  const quizStartTimeRef = useRef(0); // Tracks when the current question started
 
   // ================= STATES =================
   const [tab, setTabState] = useState("predict");
@@ -34,7 +35,7 @@ function App() {
   // ================= HELPERS =================
   const setTab = (newTab) => {
     setTabState(newTab);
-    tabRef.current = newTab; // Update ref for the interval loop
+    tabRef.current = newTab;
   };
 
   // ================= CAMERA =================
@@ -55,7 +56,6 @@ function App() {
   const processFrame = useCallback(async () => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
 
-    // 1. Grab Frame
     const canvas = document.createElement("canvas");
     canvas.width = 300;
     canvas.height = 300;
@@ -76,7 +76,6 @@ function App() {
         
         setPrediction(currentPred);
 
-        // 2. Route logic based on current tab
         if (currentPred) {
           handleAppLogic(currentPred);
         }
@@ -98,29 +97,68 @@ function App() {
         stableCountRef.current = 1;
       }
 
-      // If held for 3 frames (~1.8 seconds) and isn't the exact same letter we just added
       if (stableCountRef.current >= 3 && currentPred !== lastAddedRef.current) {
         setSentence((prev) => prev + currentPred);
         lastAddedRef.current = currentPred;
-        stableCountRef.current = 0; // Reset
+        stableCountRef.current = 0;
       }
     }
 
     // --- QUIZ LOGIC ---
     if (currentTab === "quiz" && quizActiveRef.current) {
       if (currentPred === quizTargetRef.current) {
-        // They got it right! Hold for 2 frames to confirm.
         stableCountRef.current += 1;
         if (stableCountRef.current >= 2) {
-          handleQuizCorrect();
+          progressQuiz(true); // Guessed correctly!
         }
       } else {
-        stableCountRef.current = 0; // Reset if they drop the sign
+        stableCountRef.current = 0;
       }
     }
   };
 
-  // ================= GLOBAL INTERVAL =================
+  // ================= QUIZ CONTROLS =================
+  // Handles moving to the next question for both correct answers and timeouts
+  const progressQuiz = useCallback((isCorrect) => {
+    if (isCorrect) {
+      setScore((s) => s + 1);
+    }
+
+    setTotal((prevTotal) => {
+      const newTotal = prevTotal + 1;
+      
+      // Check if quiz is over
+      if (newTotal >= MAX_Q) {
+        quizActiveRef.current = false;
+        return newTotal;
+      }
+
+      // Setup next question
+      const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+      setTarget(randomLetter);
+      quizTargetRef.current = randomLetter;
+      stableCountRef.current = 0;
+      quizStartTimeRef.current = Date.now(); // Reset the hidden timer
+      
+      return newTotal;
+    });
+  }, []);
+
+  const startQuiz = () => {
+    setScore(0);
+    setTotal(0);
+    quizActiveRef.current = true;
+    
+    // Setup first question
+    const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
+    setTarget(randomLetter);
+    quizTargetRef.current = randomLetter;
+    stableCountRef.current = 0;
+    quizStartTimeRef.current = Date.now();
+  };
+
+  // ================= INTERVALS =================
+  // 1. Camera Frame Loop
   useEffect(() => {
     let interval;
     if (isCameraRunning && tab !== "guide") {
@@ -131,14 +169,28 @@ function App() {
     return () => clearInterval(interval);
   }, [isCameraRunning, tab, processFrame]);
 
-  // ================= KEYBOARD (Sentence Tab) =================
+  // 2. Hidden 5-Second Quiz Timer Loop
+  useEffect(() => {
+    const timerInterval = setInterval(() => {
+      if (tabRef.current === "quiz" && quizActiveRef.current) {
+        // If 5000ms (5 seconds) have passed since the question started
+        if (Date.now() - quizStartTimeRef.current >= 5000) {
+          progressQuiz(false); // Time is up! Skip automatically.
+        }
+      }
+    }, 500); // Check the clock every half-second
+
+    return () => clearInterval(timerInterval);
+  }, [progressQuiz]);
+
+  // ================= KEYBOARD =================
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
 
       if (e.key === " ") {
         setSentence((prev) => prev + " ");
-        lastAddedRef.current = ""; // allow double letters after space
+        lastAddedRef.current = ""; 
       } else if (e.key === "Backspace") {
         setSentence((prev) => prev.slice(0, -1));
         lastAddedRef.current = ""; 
@@ -148,37 +200,6 @@ function App() {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
-
-  // ================= QUIZ CONTROLS =================
-  const startQuiz = () => {
-    setScore(0);
-    setTotal(0);
-    nextQuestion();
-    quizActiveRef.current = true;
-  };
-
-  const nextQuestion = () => {
-    if (total >= MAX_Q - 1) {
-      quizActiveRef.current = false;
-      setTotal((prev) => prev + 1); // Trigger end screen
-      return;
-    }
-    const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
-    setTarget(randomLetter);
-    quizTargetRef.current = randomLetter;
-    stableCountRef.current = 0;
-  };
-
-  const handleQuizCorrect = () => {
-    setScore((s) => s + 1);
-    setTotal((t) => t + 1);
-    nextQuestion();
-  };
-
-  const skipQuestion = () => {
-    setTotal((t) => t + 1);
-    nextQuestion();
-  };
 
   // ================= UI RENDER =================
   return (
@@ -197,7 +218,10 @@ function App() {
         ))}
       </div>
 
-      <div className="center">
+      <div 
+        className="center" 
+        style={{ display: tab === "guide" ? "none" : "flex" }}
+      >
         <div className="camera-container">
           <video ref={videoRef} autoPlay playsInline muted />
           {!isCameraRunning && (
@@ -208,7 +232,7 @@ function App() {
             </div>
           )}
         </div>
-        {isCameraRunning && tab !== "guide" && (
+        {isCameraRunning && (
           <h3 className="live-pred">Live: {prediction || "..."}</h3>
         )}
       </div>
@@ -250,7 +274,9 @@ function App() {
               <h2>Form the letter:</h2>
               <h1 className="target-letter">{target}</h1>
               <p>Question: {total + 1} / {MAX_Q} | Score: {score}</p>
-              <button className="btn red" onClick={skipQuestion}>Skip Letter</button>
+              <button className="btn red" onClick={() => progressQuiz(false)}>
+                Skip Letter
+              </button>
             </div>
           )}
         </div>
