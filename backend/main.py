@@ -78,7 +78,7 @@ async def predict_sequence(file: UploadFile = File(...)):
     cap = cv2.VideoCapture(temp_video_path)
     frames = []
 
-    # Updated to extract 60 frames
+    # Extract exactly 60 frames
     while len(frames) < 60: 
         ret, frame = cap.read()
         if not ret: break
@@ -90,6 +90,7 @@ async def predict_sequence(file: UploadFile = File(...)):
         row = []
         if result.multi_hand_landmarks:
             hands_detected = result.multi_hand_landmarks
+            # Sort hands left-to-right to ensure consistency
             hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
             
             for i in range(2):
@@ -116,6 +117,19 @@ async def predict_sequence(file: UploadFile = File(...)):
     class_index = np.argmax(prediction[0])
     confidence = float(prediction[0][class_index])
     
+    # --- DEBUGGING: PRINT THE MODEL'S "BRAIN" OUTPUT ---
+    print("\n" + "="*30)
+    print("🧠 MODEL PREDICTION BREAKDOWN")
+    print("="*30)
+    print(f"Top Guess: {sequence_labels[class_index]} ({confidence * 100:.1f}%)")
+    print("-" * 30)
+    
+    for label, prob in zip(sequence_labels, prediction[0]):
+        print(f"  {label.ljust(15)} : {prob * 100:>5.1f}%")
+    print("="*30 + "\n")
+    # ---------------------------------------------------
+    
+    # Only return the label if confidence is highly certain (> 70%)
     if confidence > 0.7:
         predicted_label = str(sequence_labels[class_index])
     else:
