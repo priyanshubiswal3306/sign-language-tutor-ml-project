@@ -3,7 +3,6 @@ import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
-// UPDATED: Matched exactly to your dataset folder names
 const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
@@ -14,24 +13,32 @@ function App() {
   const recordedChunksRef = useRef([]); 
   const tabRef = useRef("predict");
 
+  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
   const handDetectedRef = useRef(false);
   const lastAddedTimeRef = useRef(0); 
 
+  // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
   const quizStartTimeRef = useRef(0);
 
+  // Word Mode Refs
   const wordActiveRef = useRef(false);
   const targetWordRef = useRef("");
   const wordIndexRef = useRef(0);
   const wordStartTimeRef = useRef(0);
   const wordHandDetectedRef = useRef(false);
 
+  // Phrases Mode Refs
+  const phraseActiveRef = useRef(false);
   const phraseTargetRef = useRef("");
+  const phraseStartTimeRef = useRef(0);
+  const phraseHandDetectedRef = useRef(false);
 
+  // States
   const [tab, setTabState] = useState("predict");
   const [prediction, setPrediction] = useState("");
   const [isCameraRunning, setIsCameraRunning] = useState(false);
@@ -49,7 +56,7 @@ function App() {
   const [wordComplete, setWordComplete] = useState(false);
 
   const [phrase, setPhrase] = useState("");
-  const [phraseComplete, setPhraseComplete] = useState(false);
+  const [phraseResult, setPhraseResult] = useState(null); // null = playing, 'correct' = win, 'wrong' = timeout
 
   const setTab = (newTab) => {
     setTabState(newTab);
@@ -79,6 +86,9 @@ function App() {
 
   const recordAndPredictSequence = useCallback(() => {
     if (!videoRef.current || !videoRef.current.srcObject) return;
+    
+    // Don't record if we aren't actively playing the phrase game (or if already recording)
+    if (tabRef.current === "phrases" && !phraseActiveRef.current) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
 
     setIsRecording(true);
@@ -106,12 +116,22 @@ function App() {
           body: formData,
         });
         const data = await res.json();
-        const currentPred = data.label ? data.label.trim() : "";
         
-        setPrediction(currentPred);
+        // Timer logic: start the 10-second countdown once the first recording finishes
+        if (tabRef.current === "phrases" && phraseActiveRef.current) {
+          if (!phraseHandDetectedRef.current) {
+            phraseHandDetectedRef.current = true;
+            phraseStartTimeRef.current = Date.now();
+          }
+          
+          const currentPred = data.label ? data.label.trim() : "";
+          setPrediction(currentPred);
 
-        if (tabRef.current === "phrases" && currentPred === phraseTargetRef.current && !phraseComplete) {
-            setPhraseComplete(true);
+          // If they got it right, stop the game and show success
+          if (currentPred === phraseTargetRef.current) {
+            phraseActiveRef.current = false;
+            setPhraseResult('correct');
+          }
         }
 
       } catch (error) {
@@ -128,7 +148,7 @@ function App() {
       }
     }, 3000); 
 
-  }, [phraseComplete]);
+  }, []);
 
   const processFrame = useCallback(async () => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
@@ -226,7 +246,12 @@ function App() {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
     setPhrase(randomPhrase);
     phraseTargetRef.current = randomPhrase;
-    setPhraseComplete(false);
+    
+    // Reset all states and timers for the new phrase
+    setPhraseResult(null);
+    phraseActiveRef.current = true;
+    phraseStartTimeRef.current = 0;
+    phraseHandDetectedRef.current = false;
   };
   
   const progressWord = useCallback((isCorrect) => {
@@ -294,7 +319,7 @@ function App() {
     quizStartTimeRef.current = 0;
   };
 
-  // ================= INTERVALS =================
+  // ================= INTERVALS & TIMERS =================
   useEffect(() => {
     let interval;
     if (isCameraRunning && tab !== "guide") {
@@ -316,23 +341,39 @@ function App() {
     }
   }, [isCameraRunning, tab, processFrame, recordAndPredictSequence]);
 
+  // Global Time-Out Checker for Quiz, Word, and Phrases
   useEffect(() => {
     const timerInterval = setInterval(() => {
       const now = Date.now();
+      
       if (tabRef.current === "quiz" && quizActiveRef.current) {
         if (handDetectedRef.current && quizStartTimeRef.current > 0) {
           if (now - quizStartTimeRef.current >= 5000) progressQuiz(false); 
         }
       }
+      
       if (tabRef.current === "word" && wordActiveRef.current && !wordComplete) {
         if (wordHandDetectedRef.current && wordStartTimeRef.current > 0) {
           if (now - wordStartTimeRef.current >= 5000) progressWord(false); 
         }
       }
+
+      // New Phrase Timeout Logic
+      if (tabRef.current === "phrases" && phraseActiveRef.current) {
+        if (phraseHandDetectedRef.current && phraseStartTimeRef.current > 0) {
+          if (now - phraseStartTimeRef.current >= 10000) { // 10-second limit
+            phraseActiveRef.current = false;
+            setPhraseResult('wrong');
+          }
+        }
+      }
+      
     }, 500);
+    
     return () => clearInterval(timerInterval);
   }, [progressQuiz, progressWord, wordComplete]);
 
+  // ================= KEYBOARD =================
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
@@ -415,7 +456,6 @@ function App() {
           <div className="grid">
             {PHRASES.map((p) => (
               <div key={p} className="card">
-                {/* Ensure your images in public/data/guide_images/ match this exact casing, e.g., Eat.png */}
                 <img src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} alt={`Sign ${p}`} onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} />
                 <p style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#facc15" }}>{p}</p>
               </div>
@@ -480,21 +520,29 @@ function App() {
         </div>
       )}
 
+      {/* --- UPDATED PHRASES MODE UI --- */}
       {tab === "phrases" && (
         <div className="center mt-20">
           {!phrase ? (
              <button className="btn blue" onClick={startPhraseMode}>Practice Phrases</button>
-          ) : phraseComplete ? (
+          ) : phraseResult === 'correct' ? (
             <div className="result-card">
               <h2>Awesome! You signed:</h2>
               <h1 className="target-letter" style={{ fontSize: "2.5rem", color: "#22c55e" }}>{phrase}</h1>
               <button className="btn blue mt-20" onClick={startPhraseMode}>Next Phrase</button>
             </div>
+          ) : phraseResult === 'wrong' ? (
+            <div className="result-card">
+              <h2>Time's Up! ⏳</h2>
+              <p>We couldn't detect the correct sign in time.</p>
+              <h1 className="target-letter" style={{ fontSize: "2.5rem", color: "#ef4444" }}>{phrase}</h1>
+              <button className="btn blue mt-20" onClick={startPhraseMode}>Try Another Phrase</button>
+            </div>
           ) : (
             <div className="phrase-active">
               <h2>Sign the phrase:</h2>
               <h1 className="target-letter" style={{ fontSize: "3rem" }}>{phrase}</h1>
-              <p className="hint mt-20">Perform the action over the next 2 seconds.</p>
+              <p className="hint mt-20">You have 10 seconds to complete the sign!</p>
             </div>
           )}
         </div>
