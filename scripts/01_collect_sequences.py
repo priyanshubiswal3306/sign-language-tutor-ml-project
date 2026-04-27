@@ -4,6 +4,7 @@ import numpy as np
 import os
 import sys
 import uuid
+import time
 
 # Fix paths to import your custom normalizer
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -13,7 +14,8 @@ from src.utils.landmark_normalizer import normalize_landmarks
 
 # Paths & Config
 DATASET_PATH = os.path.join(BASE_DIR, "..", "data", "sequence_dataset")
-SEQ_LENGTH = 60 # Changed to 60 frames (~2 seconds)
+SEQ_LENGTH = 60 # 60 frames (~2 seconds)
+RECORD_DURATION = 2.0 # 2 seconds target
 
 # Init MediaPipe
 mp_hands = mp.solutions.hands
@@ -31,8 +33,8 @@ def collect_data():
     
     existing_files = len(os.listdir(save_dir))
     print(f"\n✅ Ready to record '{action}'. You currently have {existing_files} sequences.")
-    print("👉 Press SPACEBAR to start a 60-frame recording sequence.")
-    print("👉 Press 'q' to quit.\n")
+    print("👉 Click the video window, then press SPACEBAR or 'r' to record.")
+    print("👉 Press 'q' or ESC to quit.\n")
 
     cap = cv2.VideoCapture(0)
 
@@ -46,14 +48,19 @@ def collect_data():
         # Display instructions
         cv2.putText(display_frame, f"Recording: {action}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
         cv2.putText(display_frame, f"Count: {len(os.listdir(save_dir))}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        cv2.putText(display_frame, "Press SPACE to Record", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(display_frame, "Press SPACE or 'r' to Record", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(display_frame, "Press ESC or 'q' to Quit", (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
         cv2.imshow("Sequence Collector", display_frame)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        
+        # Quit if 'q', 'Q', or ESC (key 27) is pressed
+        if key == ord('q') or key == ord('Q') or key == 27:
+            print("Exiting collector...")
             break
-        elif key == ord(' '): # Spacebar pressed
+            
+        elif key == 32 or key == ord('r') or key == ord('R'): # SPACEBAR or 'r'/'R' pressed
             # Visual Warning before recording starts
             for i in range(3, 0, -1):
                 warn_frame = frame.copy()
@@ -62,6 +69,7 @@ def collect_data():
                 cv2.waitKey(500) 
 
             sequence_data = []
+            start_time = time.time()
             
             # Record exactly SEQ_LENGTH frames
             for frame_num in range(SEQ_LENGTH):
@@ -75,7 +83,14 @@ def collect_data():
                     for hl in results.multi_hand_landmarks:
                         mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
 
-                cv2.putText(frame, f"🔴 RECORDING... Frame {frame_num}/{SEQ_LENGTH}", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+                # Calculate remaining time
+                elapsed_time = time.time() - start_time
+                time_left = max(0.0, RECORD_DURATION - elapsed_time)
+
+                # Display the timer and frame count
+                cv2.putText(frame, f"🔴 RECORDING: {time_left:.1f}s left", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+                cv2.putText(frame, f"Frame {frame_num+1}/{SEQ_LENGTH}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                
                 cv2.imshow("Sequence Collector", frame)
                 cv2.waitKey(10) 
 
