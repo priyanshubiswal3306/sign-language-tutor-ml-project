@@ -3,7 +3,8 @@ import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
-const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Food", "Hello", "Bye", "Stop"];
+// UPDATED: Matched exactly to your dataset folder names
+const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
 
@@ -76,7 +77,6 @@ function App() {
     }
   };
 
-  // ================= SEQUENCE PREDICTION (FOR PHRASES) =================
   const recordAndPredictSequence = useCallback(() => {
     if (!videoRef.current || !videoRef.current.srcObject) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
@@ -130,7 +130,6 @@ function App() {
 
   }, [phraseComplete]);
 
-  // ================= STATIC PREDICTION (FOR SINGLE LETTERS) =================
   const processFrame = useCallback(async () => {
     if (!videoRef.current || videoRef.current.readyState < 2) return;
 
@@ -300,7 +299,6 @@ function App() {
     let interval;
     if (isCameraRunning && tab !== "guide") {
       if (tab === "phrases") {
-        // Trigger recording every 3.5 seconds (Allows 3s of recording + 0.5s pause)
         interval = setInterval(() => {
           recordAndPredictSequence();
         }, 3500); 
@@ -417,6 +415,7 @@ function App() {
           <div className="grid">
             {PHRASES.map((p) => (
               <div key={p} className="card">
+                {/* Ensure your images in public/data/guide_images/ match this exact casing, e.g., Eat.png */}
                 <img src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} alt={`Sign ${p}`} onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} />
                 <p style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#facc15" }}>{p}</p>
               </div>
