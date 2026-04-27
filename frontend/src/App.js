@@ -5,71 +5,64 @@ const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
 const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Food", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
-const DOUBLE_LETTER_COOLDOWN = 3000;
+const DOUBLE_LETTER_COOLDOWN = 3000; 
 
 function App() {
-  // ================= REFS =================
   const videoRef = useRef(null);
-  const mediaRecorderRef = useRef(null); // Ref for recording sequences
-  const recordedChunksRef = useRef([]); // Ref to store sequence data
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]); 
   const tabRef = useRef("predict");
 
-  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
   const handDetectedRef = useRef(false);
-  const lastAddedTimeRef = useRef(0);
+  const lastAddedTimeRef = useRef(0); 
 
-  // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
   const quizStartTimeRef = useRef(0);
 
-  // Word Mode Refs
   const wordActiveRef = useRef(false);
   const targetWordRef = useRef("");
   const wordIndexRef = useRef(0);
   const wordStartTimeRef = useRef(0);
   const wordHandDetectedRef = useRef(false);
 
-  // Phrases Mode Refs
   const phraseTargetRef = useRef("");
 
-  // ================= STATES =================
   const [tab, setTabState] = useState("predict");
   const [prediction, setPrediction] = useState("");
   const [isCameraRunning, setIsCameraRunning] = useState(false);
-  const [isRecording, setIsRecording] = useState(false); // New state for recording phrases
+  const [isRecording, setIsRecording] = useState(false); 
 
-  // Shared UI States
   const [sentence, setSentence] = useState("");
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
   const [target, setTarget] = useState("");
-  const [quizStats, setQuizStats] = useState([]);
+  const [quizStats, setQuizStats] = useState([]); 
+
   const [word, setWord] = useState("");
   const [wordProgress, setWordProgress] = useState(0);
-  const [wordResults, setWordResults] = useState([]);
+  const [wordResults, setWordResults] = useState([]); 
   const [wordComplete, setWordComplete] = useState(false);
+
   const [phrase, setPhrase] = useState("");
   const [phraseComplete, setPhraseComplete] = useState(false);
 
-  // ================= HELPERS =================
   const setTab = (newTab) => {
     setTabState(newTab);
     tabRef.current = newTab;
-    setPrediction(""); // Clear previous predictions when switching tabs
+    setPrediction("");
   };
 
   const speakSentence = () => {
     if (!sentence) return;
     const utterance = new SpeechSynthesisUtterance(sentence);
-    utterance.rate = 0.9;
+    utterance.rate = 0.9; 
     window.speechSynthesis.speak(utterance);
   };
 
-  // ================= CAMERA =================
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -84,11 +77,8 @@ function App() {
   };
 
   // ================= SEQUENCE PREDICTION (FOR PHRASES) =================
-  // This function records exactly 2 seconds of video to send to the LSTM model
   const recordAndPredictSequence = useCallback(() => {
     if (!videoRef.current || !videoRef.current.srcObject) return;
-    
-    // Don't record if already recording
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
 
     setIsRecording(true);
@@ -108,9 +98,8 @@ function App() {
       setIsRecording(false);
       const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
       const formData = new FormData();
-      formData.append("file", blob); // Send the entire video chunk
+      formData.append("file", blob); 
 
-      // Note: Your backend app.py needs a new endpoint, e.g., /predict_sequence
       try {
         const res = await fetch("http://127.0.0.1:8000/predict_sequence", {
           method: "POST",
@@ -121,7 +110,6 @@ function App() {
         
         setPrediction(currentPred);
 
-        // Check if the prediction matches the target phrase
         if (tabRef.current === "phrases" && currentPred === phraseTargetRef.current && !phraseComplete) {
             setPhraseComplete(true);
         }
@@ -133,15 +121,14 @@ function App() {
 
     mediaRecorder.start();
     
-    // Stop recording after 2000ms (2 seconds)
+    // Stop recording after 3000ms (3 seconds) to ensure 60 frames are captured
     setTimeout(() => {
       if (mediaRecorder.state === "recording") {
         mediaRecorder.stop();
       }
-    }, 2000); 
+    }, 3000); 
 
   }, [phraseComplete]);
-
 
   // ================= STATIC PREDICTION (FOR SINGLE LETTERS) =================
   const processFrame = useCallback(async () => {
@@ -179,7 +166,6 @@ function App() {
   const handleAppLogic = (currentPred) => {
     const currentTab = tabRef.current;
 
-    // --- SENTENCE LOGIC ---
     if (currentTab === "sentence") {
       if (currentPred === stableCharRef.current) {
         stableCountRef.current += 1;
@@ -206,7 +192,6 @@ function App() {
       }
     }
 
-    // --- QUIZ LOGIC ---
     if (currentTab === "quiz" && quizActiveRef.current) {
       if (!handDetectedRef.current) {
         handDetectedRef.current = true;
@@ -221,7 +206,6 @@ function App() {
       }
     }
 
-    // --- WORD/BEE LOGIC ---
     if (currentTab === "word" && wordActiveRef.current && !wordComplete) {
       if (!wordHandDetectedRef.current) {
         wordHandDetectedRef.current = true;
@@ -239,7 +223,6 @@ function App() {
     }
   };
 
-  // ================= FEATURE CONTROLS =================
   const startPhraseMode = () => {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
     setPhrase(randomPhrase);
@@ -316,14 +299,12 @@ function App() {
   useEffect(() => {
     let interval;
     if (isCameraRunning && tab !== "guide") {
-      // Use different intervals based on the active tab
       if (tab === "phrases") {
-        // For phrases, trigger the sequence recorder every 2.5 seconds (gives a 0.5s pause between recordings)
+        // Trigger recording every 3.5 seconds (Allows 3s of recording + 0.5s pause)
         interval = setInterval(() => {
           recordAndPredictSequence();
-        }, 2500); 
+        }, 3500); 
       } else {
-        // For letters (quiz, word, predict), use the static image predictor
         interval = setInterval(() => {
           processFrame();
         }, 600);
@@ -331,7 +312,6 @@ function App() {
     }
     return () => {
         clearInterval(interval);
-        // Ensure recorder is stopped if component unmounts or tab changes
         if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
             mediaRecorderRef.current.stop();
         }
@@ -355,7 +335,6 @@ function App() {
     return () => clearInterval(timerInterval);
   }, [progressQuiz, progressWord, wordComplete]);
 
-  // ================= KEYBOARD =================
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
@@ -403,7 +382,6 @@ function App() {
     );
   };
 
-  // ================= UI RENDER =================
   return (
     <div className="app">
       <h1 className="title">🤟 AI Sign Language Tutor</h1>

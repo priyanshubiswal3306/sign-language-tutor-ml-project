@@ -9,14 +9,12 @@ import tempfile
 import sys
 import os
 
-# 🔥 Fix imports from root project
+# Fix imports from root project
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from src.utils.landmark_normalizer import normalize_landmarks
 
 app = FastAPI()
 
-# 🔥 Allow React to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,21 +25,14 @@ app.add_middleware(
 
 # ================= LOAD MODELS =================
 print("Loading models...")
-
-# 1. Static Model (Letters)
 static_model = tf.keras.models.load_model("../models/landmark_model.keras")
 static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
 
-# 2. Sequence Model (Phrases)
 sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
 sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
 
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(
-    static_image_mode=False,
-    max_num_hands=2,
-    min_detection_confidence=0.5
-)
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
 
 print("Models loaded successfully!")
 
@@ -49,11 +40,10 @@ print("Models loaded successfully!")
 def home():
     return {"message": "Backend running"}
 
-# ================= ENDPOINT 1: STATIC PREDICTION (LETTERS) =================
+# ================= ENDPOINT 1: STATIC (LETTERS) =================
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
-
     np_arr = np.frombuffer(contents, np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
@@ -61,46 +51,37 @@ async def predict(file: UploadFile = File(...)):
     results = hands.process(rgb)
 
     label = ""
-
     if results.multi_hand_landmarks:
-        for hand_landmarks, hand_info in zip(
-            results.multi_hand_landmarks,
-            results.multi_handedness
-        ):
+        for hand_landmarks, hand_info in zip(results.multi_hand_landmarks, results.multi_handedness):
             is_left = (hand_info.classification[0].label == "Left")
-
             row = []
             for lm in hand_landmarks.landmark:
                 row.extend([lm.x, lm.y, lm.z])
 
             if len(row) == 63:
-                # Custom normalizer logic used for static model
                 normalized = normalize_landmarks(row, is_left_hand=is_left)
                 data = np.array(normalized).reshape(1, -1)
-
                 preds = static_model.predict(data, verbose=0)
                 label = str(static_labels[np.argmax(preds)])
 
     return {"label": label} 
 
-# ================= ENDPOINT 2: SEQUENCE PREDICTION (PHRASES) =================
+# ================= ENDPOINT 2: SEQUENCE (PHRASES) =================
 @app.post("/predict_sequence")
 async def predict_sequence(file: UploadFile = File(...)):
-    # 1. Save the incoming WebM video to a temporary file
     temp_dir = tempfile.gettempdir()
     temp_video_path = os.path.join(temp_dir, "temp_sequence.webm")
     
     with open(temp_video_path, "wb") as buffer:
         buffer.write(await file.read())
 
-    # 2. Extract 30 frames using OpenCV (Mirroring your extract_sequences.py logic)
     cap = cv2.VideoCapture(temp_video_path)
     frames = []
 
-    while len(frames) < 30: # SEQ_LENGTH from your training script
+    # Updated to extract 60 frames
+    while len(frames) < 60: 
         ret, frame = cap.read()
-        if not ret:
-            break
+        if not ret: break
             
         frame = cv2.flip(frame, 1)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -109,7 +90,6 @@ async def predict_sequence(file: UploadFile = File(...)):
         row = []
         if result.multi_hand_landmarks:
             hands_detected = result.multi_hand_landmarks
-            # Sort hands left-to-right to match training
             hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
             
             for i in range(2):
@@ -118,30 +98,24 @@ async def predict_sequence(file: UploadFile = File(...)):
                     for p in lm.landmark:
                         row.extend([p.x, p.y, p.z])
                 else:
-                    row.extend([0.0] * 63) # Pad missing hand
+                    row.extend([0.0] * 63) 
         else:
-            row = [0.0] * 126 # Pad missing hands
+            row = [0.0] * 126 
             
         frames.append(row)
-    
     cap.release()
     
-    # Clean up temp file
     if os.path.exists(temp_video_path):
         os.remove(temp_video_path)
         
-    # 3. Verify frame count
-    if len(frames) != 30:
-        return {"label": "", "error": f"Sequence too short ({len(frames)}/30)"}
+    if len(frames) != 60:
+        return {"label": "", "error": f"Sequence too short ({len(frames)}/60)"}
 
-    # 4. Predict
-    sequence_data = np.array([frames]) # Shape: (1, 30, 126)
-    
+    sequence_data = np.array([frames])
     prediction = sequence_model.predict(sequence_data, verbose=0)
     class_index = np.argmax(prediction[0])
     confidence = float(prediction[0][class_index])
     
-    # Only return the label if confidence is high (> 70%)
     if confidence > 0.7:
         predicted_label = str(sequence_labels[class_index])
     else:
