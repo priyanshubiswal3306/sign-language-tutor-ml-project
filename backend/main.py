@@ -9,12 +9,13 @@ import tempfile
 import sys
 import os
 
-# Fix imports from root project
+# Fix imports from root project so we can use the custom normalizer
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.utils.landmark_normalizer import normalize_landmarks
 
 app = FastAPI()
 
+# Allow React to connect
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,7 +25,7 @@ app.add_middleware(
 )
 
 # ================= LOAD MODELS =================
-print("Loading models...")
+print("Loading models... Please wait.")
 static_model = tf.keras.models.load_model("../models/landmark_model.keras")
 static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
 
@@ -34,13 +35,13 @@ sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
 
-print("Models loaded successfully!")
+print("✅ Models loaded successfully!")
 
 @app.get("/")
 def home():
-    return {"message": "Backend running"}
+    return {"message": "Sign Language Tutor Backend is running!"}
 
-# ================= ENDPOINT 1: STATIC (LETTERS) =================
+# ================= ENDPOINT 1: STATIC (LETTERS/WORDS) =================
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     contents = await file.read()
@@ -89,30 +90,45 @@ async def predict_sequence(file: UploadFile = File(...)):
         
         row = []
         if result.multi_hand_landmarks:
-            hands_detected = result.multi_hand_landmarks
-            # Sort hands left-to-right to ensure consistency
-            hands_detected = sorted(hands_detected, key=lambda h: h.landmark[0].x)
+            # Pair landmarks with handedness
+            hands_detected = list(zip(result.multi_hand_landmarks, result.multi_handedness))
             
-            for i in range(2):
-                if i < len(hands_detected):
-                    lm = hands_detected[i]
-                    for p in lm.landmark:
-                        row.extend([p.x, p.y, p.z])
-                else:
-                    row.extend([0.0] * 63) 
+            # Sort hands left-to-right to ensure consistency
+            hands_detected = sorted(hands_detected, key=lambda h: h[0].landmark[0].x)
+            
+            for hand_landmarks, hand_info in hands_detected[:2]:
+                is_left = (hand_info.classification[0].label == "Left")
+                
+                raw_coords = []
+                for lm in hand_landmarks.landmark:
+                    raw_coords.extend([lm.x, lm.y, lm.z])
+                
+                # CRITICAL FIX: Apply normalizer before appending to sequence
+                normalized = normalize_landmarks(raw_coords, is_left_hand=is_left)
+                row.extend(normalized)
+                
+            # Pad if only one hand is detected
+            if len(hands_detected) == 1:
+                row.extend([0.0] * 63)
         else:
+            # Pad if no hands are detected
             row = [0.0] * 126 
             
         frames.append(row)
     cap.release()
     
+    # Clean up the temporary file
     if os.path.exists(temp_video_path):
         os.remove(temp_video_path)
         
+    # Abort if the recording didn't capture enough frames
     if len(frames) != 60:
         return {"label": "", "error": f"Sequence too short ({len(frames)}/60)"}
 
+    # Reshape the data for the LSTM model
     sequence_data = np.array([frames])
+    
+    # Get prediction
     prediction = sequence_model.predict(sequence_data, verbose=0)
     class_index = np.argmax(prediction[0])
     confidence = float(prediction[0][class_index])
@@ -129,7 +145,7 @@ async def predict_sequence(file: UploadFile = File(...)):
     print("="*30 + "\n")
     # ---------------------------------------------------
     
-    # Only return the label if confidence is highly certain (> 70%)
+    # Only return the label to React if the AI is confident (> 70%)
     if confidence > 0.7:
         predicted_label = str(sequence_labels[class_index])
     else:
