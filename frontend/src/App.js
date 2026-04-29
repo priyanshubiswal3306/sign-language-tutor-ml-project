@@ -6,16 +6,56 @@ const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "H
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
 
-const FALLBACK_WORDS = ["APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", "LIGHT", "MUSIC", "WORLD", "HELLO"];
+// EXTREME FALLBACK LIST: 100 pre-defined words
+const FALLBACK_WORDS = [
+  "APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", 
+  "LIGHT", "MUSIC", "WORLD", "HELLO", "REACT", "PYTHON", "CODING", "HOUSE", "MOUSE", "CHAIR", 
+  "TABLE", "PHONE", "CLOCK", "WATCH", "TRAIN", "PLANE", "SPACE", "EARTH", "NIGHT", "OCEAN", 
+  "BEACH", "HEART", "PEACE", "DREAM", "LAUGH", "YOUTH", "FAITH", "TRUST", "TRUTH", "BRAVE", 
+  "SMART", "QUICK", "FLASH", "GHOST", "MAGIC", "DRAGON", "FAIRY", "QUEEN", "TRACK", "FIELD", 
+  "SPORT", "SCORE", "MATCH", "BREAD", "FRUIT", "SWEET", "CANDY", "JUICE", "DRINK", "GLASS", 
+  "PLATE", "SPOON", "KNIFE", "CHIEF", "GUARD", "PILOT", "NURSE", "BAKER", "DANCE", "SINGER", 
+  "ACTOR", "MOVIE", "STAGE", "PAINT", "BRUSH", "COLOR", "BLACK", "WHITE", "BROWN", "YELLOW", 
+  "ORANGE", "PURPLE", "SILVER", "METAL", "STONE", "BRICK", "PAPER", "PENCIL", "ERASER", "RULER", 
+  "SCHOOL", "CLASS", "GRADE", "STUDY", "LEARN", "TEACH", "THINK", "SOLVE", "BUILD", "CREATE"
+];
+
+// Local array to hold a batch of API words
+let wordPool = [];
 
 const fetchRandomWord = async () => {
+  // 1. If we have words waiting in the pool, return one INSTANTLY
+  if (wordPool.length > 0) {
+    return wordPool.pop();
+  }
+
+  // 2. Set up a strict 5-second timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000); 
+
   try {
-    const res = await fetch(`https://random-word-api.herokuapp.com/word`);
+    // 3. Request a batch of 20 words, passing in our abort controller
+    const res = await fetch(`https://random-word-api.herokuapp.com/word?number=20`, {
+      signal: controller.signal
+    });
+    
+    // Clear the timeout if the server answers quickly
+    clearTimeout(timeoutId);
+
     if (!res.ok) throw new Error("API Network error");
+    
     const data = await res.json();
-    return data[0].toUpperCase();
+    
+    // Save all the words to our local pool in uppercase
+    wordPool = data.map(w => w.toUpperCase());
+    
+    // Return the first one for the immediate game
+    return wordPool.pop();
+
   } catch (err) {
-    console.warn("Using fallback word list due to API error.");
+    // If it takes more than 5s, or API breaks, drop down to the 100 local words
+    clearTimeout(timeoutId);
+    console.warn("API was too slow or failed. Using 100-word instant fallback.");
     return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
   }
 };
@@ -96,7 +136,7 @@ function App() {
     const fastest = validTimes.slice(0, 3);
     const slowest = [...validTimes].reverse().slice(0, 3);
 
-    // Weak Spots (Low accuracy or slowest times)
+    // Weak Spots (Low accuracy)
     const weakSpots = heatmap
       .filter(h => h.attempts > 0 && h.acc < 0.7)
       .sort((a, b) => a.acc - b.acc)
