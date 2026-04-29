@@ -6,13 +6,10 @@ const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "H
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
 
-// A fallback list just in case the user plays offline or the API goes down
 const FALLBACK_WORDS = ["APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", "LIGHT", "MUSIC", "WORLD", "HELLO"];
 
-// Function to fetch a dynamic word of ANY length from the public API
 const fetchRandomWord = async () => {
   try {
-    // Removed the length restriction to get a truly random word
     const res = await fetch(`https://random-word-api.herokuapp.com/word`);
     if (!res.ok) throw new Error("API Network error");
     const data = await res.json();
@@ -27,7 +24,30 @@ function App() {
   const videoRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]); 
-  const tabRef = useRef("predict");
+  
+  // NEW: Sidebar Layout State
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  const [tab, setTabState] = useState("home");
+  const tabRef = useRef("home");
+
+  // --- LOCAL STORAGE: USER AUTH ---
+  const [user, setUser] = useState(() => {
+    const savedUser = localStorage.getItem('signLanguageTutorUser');
+    return savedUser ? JSON.parse(savedUser) : null;
+  });
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+
+  // --- LOCAL STORAGE: ANALYTICS ---
+  const [quizStats, setQuizStats] = useState(() => {
+    const savedStats = localStorage.getItem('signLanguageStats');
+    return savedStats ? JSON.parse(savedStats) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('signLanguageStats', JSON.stringify(quizStats));
+  }, [quizStats]);
 
   // Shared Logic Refs
   const stableCharRef = useRef("");
@@ -36,26 +56,21 @@ function App() {
   const handDetectedRef = useRef(false);
   const lastAddedTimeRef = useRef(0); 
 
-  // Quiz Refs
   const quizActiveRef = useRef(false);
   const quizTargetRef = useRef("");
   const quizStartTimeRef = useRef(0);
 
-  // Word Mode Refs
   const wordActiveRef = useRef(false);
   const targetWordRef = useRef("");
   const wordIndexRef = useRef(0);
   const wordStartTimeRef = useRef(0);
   const wordHandDetectedRef = useRef(false);
 
-  // Phrases Mode Refs
   const phraseActiveRef = useRef(false);
   const phraseTargetRef = useRef("");
   const phraseStartTimeRef = useRef(0);
   const phraseHandDetectedRef = useRef(false);
 
-  // States
-  const [tab, setTabState] = useState("predict");
   const [prediction, setPrediction] = useState("");
   const [isCameraRunning, setIsCameraRunning] = useState(false);
   const [isRecording, setIsRecording] = useState(false); 
@@ -64,7 +79,6 @@ function App() {
   const [score, setScore] = useState(0);
   const [total, setTotal] = useState(0);
   const [target, setTarget] = useState("");
-  const [quizStats, setQuizStats] = useState([]); 
 
   const [word, setWord] = useState("");
   const [wordProgress, setWordProgress] = useState(0);
@@ -146,20 +160,17 @@ function App() {
             setPhraseResult('correct');
           }
         }
-
       } catch (error) {
         console.error("Sequence Prediction API Error:", error);
       }
     };
 
     mediaRecorder.start();
-    
     setTimeout(() => {
       if (mediaRecorder.state === "recording") {
         mediaRecorder.stop();
       }
     }, 3000); 
-
   }, []);
 
   const processFrame = useCallback(async () => {
@@ -184,10 +195,7 @@ function App() {
         const currentPred = data.label ? data.label.trim() : "";
         
         setPrediction(currentPred);
-
-        if (currentPred) {
-          handleAppLogic(currentPred);
-        }
+        if (currentPred) handleAppLogic(currentPred);
       } catch (error) {
         console.error("Static Prediction API Error:", error);
       }
@@ -228,7 +236,6 @@ function App() {
         handDetectedRef.current = true;
         quizStartTimeRef.current = Date.now();
       }
-
       if (currentPred === quizTargetRef.current) {
         stableCountRef.current += 1;
         if (stableCountRef.current >= 2) progressQuiz(true);
@@ -242,9 +249,7 @@ function App() {
         wordHandDetectedRef.current = true;
         wordStartTimeRef.current = Date.now();
       }
-
       const currentTargetLetter = targetWordRef.current[wordIndexRef.current];
-
       if (currentPred === currentTargetLetter) {
         stableCountRef.current += 1;
         if (stableCountRef.current >= 2) progressWord(true);
@@ -258,7 +263,6 @@ function App() {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
     setPhrase(randomPhrase);
     phraseTargetRef.current = randomPhrase;
-    
     setPhraseResult(null);
     phraseActiveRef.current = true;
     phraseStartTimeRef.current = 0;
@@ -282,10 +286,8 @@ function App() {
   const startWordMode = async () => {
     setIsFetchingWord(true);
     const dynamicWord = await fetchRandomWord();
-    
     setWord(dynamicWord);
     targetWordRef.current = dynamicWord;
-    
     setWordProgress(0);
     setWordResults([]);
     wordIndexRef.current = 0;
@@ -294,7 +296,6 @@ function App() {
     stableCountRef.current = 0;
     wordHandDetectedRef.current = false;
     wordStartTimeRef.current = 0;
-    
     setIsFetchingWord(false);
   };
 
@@ -325,7 +326,6 @@ function App() {
   const startQuiz = () => {
     setScore(0);
     setTotal(0);
-    setQuizStats([]); 
     quizActiveRef.current = true;
     const randomLetter = LETTERS[Math.floor(Math.random() * LETTERS.length)];
     setTarget(randomLetter);
@@ -338,15 +338,12 @@ function App() {
   // ================= INTERVALS & TIMERS =================
   useEffect(() => {
     let interval;
-    if (isCameraRunning && tab !== "guide") {
+    const noCameraTabs = ["home", "login", "dashboard", "guide"];
+    if (isCameraRunning && !noCameraTabs.includes(tab)) {
       if (tab === "phrases") {
-        interval = setInterval(() => {
-          recordAndPredictSequence();
-        }, 3500); 
+        interval = setInterval(() => recordAndPredictSequence(), 3500); 
       } else {
-        interval = setInterval(() => {
-          processFrame();
-        }, 600);
+        interval = setInterval(() => processFrame(), 600);
       }
     }
     return () => {
@@ -360,19 +357,16 @@ function App() {
   useEffect(() => {
     const timerInterval = setInterval(() => {
       const now = Date.now();
-      
       if (tabRef.current === "quiz" && quizActiveRef.current) {
         if (handDetectedRef.current && quizStartTimeRef.current > 0) {
           if (now - quizStartTimeRef.current >= 5000) progressQuiz(false); 
         }
       }
-      
       if (tabRef.current === "word" && wordActiveRef.current && !wordComplete) {
         if (wordHandDetectedRef.current && wordStartTimeRef.current > 0) {
           if (now - wordStartTimeRef.current >= 5000) progressWord(false); 
         }
       }
-
       if (tabRef.current === "phrases" && phraseActiveRef.current) {
         if (phraseHandDetectedRef.current && phraseStartTimeRef.current > 0) {
           if (now - phraseStartTimeRef.current >= 10000) { 
@@ -381,9 +375,7 @@ function App() {
           }
         }
       }
-      
     }, 500);
-    
     return () => clearInterval(timerInterval);
   }, [progressQuiz, progressWord, wordComplete]);
 
@@ -411,7 +403,6 @@ function App() {
 
     return (
       <div className="analytics-container">
-        <h3>📊 Post-Quiz Analytics</h3>
         <div className="stats-highlight">
           <p><strong>Fastest Sign:</strong> {fastest ? `${fastest.letter} (${fastest.time}s)` : "N/A"}</p>
           <p><strong>Slowest Sign:</strong> {slowest ? `${slowest.letter} (${slowest.time}s)` : "N/A"}</p>
@@ -422,9 +413,9 @@ function App() {
               <tr><th>Q#</th><th>Letter</th><th>Result</th><th>Time</th></tr>
             </thead>
             <tbody>
-              {quizStats.map((stat, i) => (
+              {[...quizStats].reverse().map((stat, i) => (
                 <tr key={i} className={stat.correct ? "row-correct" : "row-wrong"}>
-                  <td>{i + 1}</td><td>{stat.letter}</td><td>{stat.correct ? "✅" : "❌"}</td><td>{stat.time}{stat.correct ? "s" : ""}</td>
+                  <td>{quizStats.length - i}</td><td>{stat.letter}</td><td>{stat.correct ? "✅" : "❌"}</td><td>{stat.time}{stat.correct ? "s" : ""}</td>
                 </tr>
               ))}
             </tbody>
@@ -434,146 +425,306 @@ function App() {
     );
   };
 
+  const handleLogout = () => {
+    setUser(null); 
+    setTab("home");
+    localStorage.removeItem('signLanguageTutorUser'); 
+  };
+
+  const hideCameraTabs = ["home", "login", "dashboard", "guide"];
+
   return (
-    <div className="app">
-      <h1 className="title">🤟 AI Sign Language Tutor</h1>
-
-      <div className="tabs">
-        {["guide", "predict", "quiz", "word", "phrases", "sentence"].map((t) => (
-          <button key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
-            {t.toUpperCase()}
+    <div className="app-layout">
+      
+      {/* TOP NAVIGATION BAR */}
+      <header className="topbar">
+        <div className="topbar-left">
+          <button className="icon-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
           </button>
-        ))}
+          <span className="brand-logo" onClick={() => setTab("home")}>SignTutor</span>
+        </div>
+        
+        <div className="topbar-right">
+          {user ? (
+            <div className="user-profile-nav">
+              <div className="avatar">{user.name.charAt(0).toUpperCase()}</div>
+              <span className="user-name">{user.name}</span>
+              <button className="btn-outline red" onClick={handleLogout}>Logout</button>
+            </div>
+          ) : (
+            <button className="btn primary" onClick={() => setTab("login")}>Log In</button>
+          )}
+        </div>
+      </header>
+
+      {/* MAIN CONTENT AREA WITH SIDEBAR */}
+      <div className="main-container">
+        
+        {/* COLLAPSIBLE LEFT SIDEBAR */}
+        <aside className={`sidebar ${isSidebarOpen ? "open" : "closed"}`}>
+          <nav className="sidebar-nav">
+            <button className={`nav-item ${tab === "home" ? "active" : ""}`} onClick={() => setTab("home")}>Home</button>
+            
+            {/* Dashboard only visible if logged in */}
+            {user && (
+              <button className={`nav-item highlight ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
+            )}
+            
+            <div className="nav-section-title">Learn</div>
+            <button className={`nav-item ${tab === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Dictionary Guide</button>
+            
+            <div className="nav-section-title">Practice</div>
+            <button className={`nav-item ${tab === "predict" ? "active" : ""}`} onClick={() => setTab("predict")}>Free Practice</button>
+            <button className={`nav-item ${tab === "quiz" ? "active" : ""}`} onClick={() => setTab("quiz")}>Alphabet Quiz</button>
+            <button className={`nav-item ${tab === "word" ? "active" : ""}`} onClick={() => setTab("word")}>Spelling Bee</button>
+            <button className={`nav-item ${tab === "phrases" ? "active" : ""}`} onClick={() => setTab("phrases")}>Real Phrases</button>
+            <button className={`nav-item ${tab === "sentence" ? "active" : ""}`} onClick={() => setTab("sentence")}>Sentence Typer</button>
+          </nav>
+        </aside>
+
+        {/* SCROLLABLE CONTENT AREA */}
+        <main className="content-area">
+          <div className="content-wrapper">
+
+            {tab === "home" && (
+              <div className="view-container">
+                <h1 className="hero-title">Master Sign Language with AI</h1>
+                <p className="hero-subtitle">
+                  Practice the alphabet, test your spelling speed, and learn real-world phrases with instant, real-time feedback powered by neural networks.
+                </p>
+                <div className="button-group">
+                  <button className="btn primary lg" onClick={() => setTab(user ? "dashboard" : "login")}>
+                    {user ? "Go to Dashboard" : "Get Started"}
+                  </button>
+                  <button className="btn outline lg" onClick={() => setTab("guide")}>View Dictionary</button>
+                </div>
+              </div>
+            )}
+
+            {tab === "login" && (
+              <div className="view-container">
+                <div className="panel login-panel">
+                  <h2>Welcome Back</h2>
+                  <p className="subtitle">Sign in to track your progress</p>
+                  
+                  <div className="form-group">
+                    <label>Email Address</label>
+                    <input 
+                      type="email" 
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="name@example.com"
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Password (Demo: Any)</label>
+                    <input 
+                      type="password" 
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <button 
+                    className="btn primary full-width" 
+                    onClick={() => {
+                      if(loginEmail.includes("@")) {
+                        const newUser = { email: loginEmail, name: loginEmail.split("@")[0] };
+                        setUser(newUser);
+                        setTab("dashboard");
+                        localStorage.setItem('signLanguageTutorUser', JSON.stringify(newUser));
+                      } else {
+                        alert("Please enter a valid email to test the login.");
+                      }
+                    }}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {tab === "dashboard" && user && (
+              <div className="view-container align-left">
+                <div className="dashboard-header">
+                  <div>
+                    <h2 className="section-title">Hello, {user.name}</h2>
+                    <p className="subtitle">Here is your learning progress.</p>
+                  </div>
+                  <div className="badge success">Active Learner</div>
+                </div>
+
+                <div className="metrics-grid">
+                  <div className="metric-card">
+                    <span className="metric-label">Questions Answered</span>
+                    <span className="metric-value">{quizStats.length}</span>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Total Correct</span>
+                    <span className="metric-value success">{quizStats.filter(s => s.correct).length}</span>
+                  </div>
+                  <div className="metric-card">
+                    <span className="metric-label">Current Focus</span>
+                    <span className="metric-value focus">Alphabet</span>
+                  </div>
+                </div>
+
+                <div className="panel table-panel">
+                  <h3 className="panel-title">Recent Quiz History</h3>
+                  {quizStats.length === 0 ? (
+                    <div className="empty-state">
+                      <p>No practice data available yet.</p>
+                      <button className="btn primary" onClick={() => setTab("quiz")}>Start a Quiz</button>
+                    </div>
+                  ) : (
+                    renderAnalytics() 
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* CAMERA SECTION (Hidden on static pages) */}
+            <div className="camera-section" style={{ display: hideCameraTabs.includes(tab) ? "none" : "flex" }}>
+              <div className="camera-wrapper">
+                <video ref={videoRef} autoPlay playsInline muted />
+                {!isCameraRunning && (
+                  <div className="camera-overlay">
+                    <button className="btn primary" onClick={startCamera}>Enable Camera Feed</button>
+                  </div>
+                )}
+              </div>
+              {isCameraRunning && (
+                <div className="live-status">
+                  <span className="status-indicator"></span>
+                  Live Translation: <strong>{prediction || "Waiting for sign..."}</strong>
+                  {isRecording && <span className="recording-badge">Recording sequence</span>}
+                </div>
+              )}
+            </div>
+
+            {/* LEARNING/PRACTICE VIEWS */}
+            {tab === "guide" && (
+              <div className="view-container align-left">
+                <h2 className="section-title">Common Phrases</h2>
+                <div className="dictionary-grid">
+                  {PHRASES.map((p) => (
+                    <div key={p} className="dict-card">
+                      <img src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} alt={`Sign ${p}`} onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} />
+                      <p>{p}</p>
+                    </div>
+                  ))}
+                </div>
+                <h2 className="section-title" style={{ marginTop: "40px" }}>The Alphabet</h2>
+                <div className="dictionary-grid">
+                  {LETTERS.map((l) => (
+                    <div key={l} className="dict-card">
+                      <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
+                      <p>{l}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tab === "predict" && <div className="view-container"><h2 className="section-title">Free Practice Mode</h2><p className="subtitle">Show any sign to the camera to see the translation.</p></div>}
+
+            {tab === "quiz" && (
+              <div className="view-container">
+                {!quizActiveRef.current && total < MAX_Q && total === 0 ? (
+                  <button className="btn primary lg" onClick={startQuiz}>Start Alphabet Quiz</button>
+                ) : total >= MAX_Q ? (
+                  <div className="panel result-panel">
+                    <h2>Quiz Complete</h2>
+                    <h1 className="huge-score">{score} / {MAX_Q}</h1>
+                    <button className="btn primary mt-20" onClick={startQuiz}>Play Again</button>
+                  </div>
+                ) : (
+                  <div className="panel active-panel">
+                    <p className="subtitle">Question {total + 1} of {MAX_Q} — Score: {score}</p>
+                    <h1 className="target-display">{target}</h1>
+                    <button className="btn outline red mt-20" onClick={() => progressQuiz(false)}>Skip / Mark Wrong</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "word" && (
+              <div className="view-container">
+                {!wordActiveRef.current && !wordComplete ? (
+                   <button className="btn primary lg" onClick={startWordMode} disabled={isFetchingWord}>
+                     {isFetchingWord ? "Loading..." : "Start Spelling Bee"}
+                   </button>
+                ) : wordComplete ? (
+                  <div className="panel result-panel">
+                    <h2>Word Completed</h2>
+                    <div className="word-blocks mt-20">
+                      {word.split("").map((char, i) => (<span key={i} className={`block ${wordResults[i] ? "success" : "danger"}`}>{char}</span>))}
+                    </div>
+                    <button className="btn primary mt-20" onClick={startWordMode} disabled={isFetchingWord}>
+                      {isFetchingWord ? "Loading..." : "Next Word"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="panel active-panel">
+                    <p className="subtitle">5 seconds per letter</p>
+                    <div className="word-blocks mt-20">
+                      {word.split("").map((char, i) => {
+                        let status = "";
+                        if (i === wordProgress) status = "current";
+                        else if (i < wordProgress) status = wordResults[i] ? "success" : "danger";
+                        return (<span key={i} className={`block ${status}`}>{char}</span>);
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "phrases" && (
+              <div className="view-container">
+                {!phrase ? (
+                   <button className="btn primary lg" onClick={startPhraseMode}>Practice Phrases</button>
+                ) : phraseResult === 'correct' ? (
+                  <div className="panel result-panel">
+                    <h2>Excellent!</h2>
+                    <h1 className="target-display success">{phrase}</h1>
+                    <button className="btn primary mt-20" onClick={startPhraseMode}>Next Phrase</button>
+                  </div>
+                ) : phraseResult === 'wrong' ? (
+                  <div className="panel result-panel">
+                    <h2>Time's Up ⏳</h2>
+                    <h1 className="target-display danger">{phrase}</h1>
+                    <button className="btn primary mt-20" onClick={startPhraseMode}>Try Another</button>
+                  </div>
+                ) : (
+                  <div className="panel active-panel">
+                    <p className="subtitle">You have 10 seconds</p>
+                    <h1 className="target-display">{phrase}</h1>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === "sentence" && (
+              <div className="view-container">
+                <div className="panel typer-panel">
+                  <h2 className="typed-sentence">{sentence || <span className="placeholder">Start signing to type...</span>}</h2>
+                </div>
+                <div className="button-group mt-20">
+                  <button className="btn primary" onClick={speakSentence} disabled={!sentence}>Speak</button>
+                  <button className="btn outline red" onClick={() => { setSentence(""); lastAddedRef.current = ""; lastAddedTimeRef.current = 0;}}>Clear</button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        </main>
       </div>
-
-      <div className="center" style={{ display: tab === "guide" ? "none" : "flex" }}>
-        <div className="camera-container">
-          <video ref={videoRef} autoPlay playsInline muted />
-          {!isCameraRunning && (
-            <div className="camera-placeholder">
-              <button className="btn" onClick={startCamera}>Start Camera</button>
-            </div>
-          )}
-        </div>
-        {isCameraRunning && (
-            <h3 className="live-pred">
-                Live: {prediction || "..."} 
-                {isRecording && <span style={{color: 'red', marginLeft: '10px', fontSize: '0.8em'}}>⏺ Recording...</span>}
-            </h3>
-        )}
-      </div>
-
-      {tab === "guide" && (
-        <div className="guide-container" style={{ padding: "20px", maxWidth: "900px", margin: "0 auto" }}>
-          <h2 style={{ textAlign: "left", color: "#3b82f6", borderBottom: "2px solid #334155", paddingBottom: "10px" }}>Common Phrases</h2>
-          <div className="grid">
-            {PHRASES.map((p) => (
-              <div key={p} className="card">
-                <img src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} alt={`Sign ${p}`} onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} />
-                <p style={{ fontWeight: "bold", fontSize: "1.2rem", color: "#facc15" }}>{p}</p>
-              </div>
-            ))}
-          </div>
-          <h2 style={{ textAlign: "left", color: "#3b82f6", borderBottom: "2px solid #334155", paddingBottom: "10px", marginTop: "40px" }}>Alphabet</h2>
-          <div className="grid">
-            {LETTERS.map((l) => (
-              <div key={l} className="card">
-                <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
-                <p>{l}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {tab === "predict" && <div className="center mt-20"><h2 className="output">Result: {prediction || "Show a sign"}</h2></div>}
-
-      {tab === "quiz" && (
-        <div className="center mt-20">
-          {!quizActiveRef.current && total < MAX_Q && total === 0 ? (
-            <button className="btn blue" onClick={startQuiz}>Start 30-Question Quiz</button>
-          ) : total >= MAX_Q ? (
-            <div className="result-card">
-              <h2>Quiz Complete!</h2><h1 className="score-text">{score} / {MAX_Q}</h1>{renderAnalytics()}<button className="btn blue" onClick={startQuiz}>Play Again</button>
-            </div>
-          ) : (
-            <div className="quiz-active">
-              <h2>Form the letter:</h2><h1 className="target-letter">{target}</h1><p>Question: {total + 1} / {MAX_Q} | Score: {score}</p><button className="btn red" onClick={() => progressQuiz(false)}>Mark as Wrong</button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "word" && (
-        <div className="center mt-20">
-          {!wordActiveRef.current && !wordComplete ? (
-             <button className="btn blue" onClick={startWordMode} disabled={isFetchingWord}>
-               {isFetchingWord ? "Fetching Word..." : "Start Spelling Bee"}
-             </button>
-          ) : wordComplete ? (
-            <div className="result-card">
-              <h2>Word Complete!</h2>
-              <div className="word-display mt-20">
-                {word.split("").map((char, i) => (<span key={i} className={`word-char ${wordResults[i] ? "completed" : "wrong"}`}>{char}</span>))}
-              </div>
-              <button className="btn blue mt-20" onClick={startWordMode} disabled={isFetchingWord}>
-                {isFetchingWord ? "Fetching..." : "Next Word"}
-              </button>
-            </div>
-          ) : (
-            <div className="word-active">
-              <h2>Spell the word:</h2>
-              <div className="word-display">
-                {word.split("").map((char, i) => {
-                  let statusClass = "";
-                  if (i === wordProgress) statusClass = "current";
-                  else if (i < wordProgress) { statusClass = wordResults[i] ? "completed" : "wrong"; }
-                  return (<span key={i} className={`word-char ${statusClass}`}>{char}</span>);
-                })}
-              </div>
-              <p className="hint mt-20">You have 5 seconds per letter!</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "phrases" && (
-        <div className="center mt-20">
-          {!phrase ? (
-             <button className="btn blue" onClick={startPhraseMode}>Practice Phrases</button>
-          ) : phraseResult === 'correct' ? (
-            <div className="result-card">
-              <h2>Awesome! You signed:</h2>
-              <h1 className="target-letter" style={{ fontSize: "2.5rem", color: "#22c55e" }}>{phrase}</h1>
-              <button className="btn blue mt-20" onClick={startPhraseMode}>Next Phrase</button>
-            </div>
-          ) : phraseResult === 'wrong' ? (
-            <div className="result-card">
-              <h2>Time's Up! ⏳</h2>
-              <p>We couldn't detect the correct sign in time.</p>
-              <h1 className="target-letter" style={{ fontSize: "2.5rem", color: "#ef4444" }}>{phrase}</h1>
-              <button className="btn blue mt-20" onClick={startPhraseMode}>Try Another Phrase</button>
-            </div>
-          ) : (
-            <div className="phrase-active">
-              <h2>Sign the phrase:</h2>
-              <h1 className="target-letter" style={{ fontSize: "3rem" }}>{phrase}</h1>
-              <p className="hint mt-20">You have 10 seconds to complete the sign!</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "sentence" && (
-        <div className="center mt-20">
-          <div className="sentence-box"><h2 className="sentence">{sentence}</h2>{!sentence && <span className="placeholder-text">Begin signing to type...</span>}</div>
-          <p className="hint">Hold sign to type • Cooldown for double letters: {DOUBLE_LETTER_COOLDOWN / 1000}s</p>
-          <div className="button-group">
-            <button className="btn blue" onClick={speakSentence} disabled={!sentence}>🗣️ Speak</button>
-            <button className="btn red" onClick={() => { setSentence(""); lastAddedRef.current = ""; lastAddedTimeRef.current = 0;}}>Clear</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
