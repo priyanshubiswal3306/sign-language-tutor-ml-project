@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
 import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -25,7 +25,6 @@ function App() {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]); 
   
-  // NEW: Sidebar Layout State
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const [tab, setTabState] = useState("home");
@@ -47,6 +46,63 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem('signLanguageStats', JSON.stringify(quizStats));
+  }, [quizStats]);
+
+  // --- DASHBOARD ANALYTICS ENGINE ---
+  const dashboardData = useMemo(() => {
+    if (!quizStats || quizStats.length === 0) return null;
+
+    let totalCorrect = 0;
+    const letterData = {};
+    LETTERS.forEach(l => letterData[l] = { attempts: 0, correct: 0, times: [] });
+
+    quizStats.forEach(stat => {
+      if (stat.correct) totalCorrect++;
+      if (letterData[stat.letter]) {
+        letterData[stat.letter].attempts++;
+        if (stat.correct) letterData[stat.letter].correct++;
+        if (stat.time !== "Wrong" && !isNaN(parseFloat(stat.time))) {
+          letterData[stat.letter].times.push(parseFloat(stat.time));
+        }
+      }
+    });
+
+    const accuracy = Math.round((totalCorrect / quizStats.length) * 100);
+
+    // Heatmap & Leaderboard Data
+    const heatmap = [];
+    let validTimes = [];
+
+    LETTERS.forEach(l => {
+      const data = letterData[l];
+      const acc = data.attempts > 0 ? data.correct / data.attempts : null;
+      const avgTime = data.times.length > 0 ? (data.times.reduce((a,b)=>a+b,0) / data.times.length) : null;
+      
+      let status = "unpracticed";
+      if (acc !== null) {
+        if (acc >= 0.8) status = "good";
+        else if (acc >= 0.5) status = "okay";
+        else status = "bad";
+      }
+
+      heatmap.push({ letter: l, status, acc, avgTime, attempts: data.attempts });
+      if (avgTime !== null && acc !== null) {
+        validTimes.push({ letter: l, avgTime, acc });
+      }
+    });
+
+    // Fastest & Slowest (Requires at least 1 correct attempt)
+    validTimes.sort((a, b) => a.avgTime - b.avgTime);
+    const fastest = validTimes.slice(0, 3);
+    const slowest = [...validTimes].reverse().slice(0, 3);
+
+    // Weak Spots (Low accuracy or slowest times)
+    const weakSpots = heatmap
+      .filter(h => h.attempts > 0 && h.acc < 0.7)
+      .sort((a, b) => a.acc - b.acc)
+      .slice(0, 3);
+
+    return { totalAttempts: quizStats.length, accuracy, heatmap, fastest, slowest, weakSpots };
   }, [quizStats]);
 
   // Shared Logic Refs
@@ -396,34 +452,6 @@ function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-  const renderAnalytics = () => {
-    const correctAnswers = quizStats.filter(s => s.correct);
-    const fastest = correctAnswers.length > 0 ? correctAnswers.reduce((min, p) => parseFloat(p.time) < parseFloat(min.time) ? p : min, correctAnswers[0]) : null;
-    const slowest = correctAnswers.length > 0 ? correctAnswers.reduce((max, p) => parseFloat(p.time) > parseFloat(max.time) ? p : max, correctAnswers[0]) : null;
-
-    return (
-      <div className="analytics-container">
-        <div className="stats-highlight">
-          <p><strong>Fastest Sign:</strong> {fastest ? `${fastest.letter} (${fastest.time}s)` : "N/A"}</p>
-          <p><strong>Slowest Sign:</strong> {slowest ? `${slowest.letter} (${slowest.time}s)` : "N/A"}</p>
-        </div>
-        <div className="stats-table-container">
-          <table className="stats-table">
-            <thead>
-              <tr><th>Q#</th><th>Letter</th><th>Result</th><th>Time</th></tr>
-            </thead>
-            <tbody>
-              {[...quizStats].reverse().map((stat, i) => (
-                <tr key={i} className={stat.correct ? "row-correct" : "row-wrong"}>
-                  <td>{quizStats.length - i}</td><td>{stat.letter}</td><td>{stat.correct ? "✅" : "❌"}</td><td>{stat.time}{stat.correct ? "s" : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
 
   const handleLogout = () => {
     setUser(null); 
@@ -468,22 +496,26 @@ function App() {
         {/* COLLAPSIBLE LEFT SIDEBAR */}
         <aside className={`sidebar ${isSidebarOpen ? "open" : "closed"}`}>
           <nav className="sidebar-nav">
-            <button className={`nav-item ${tab === "home" ? "active" : ""}`} onClick={() => setTab("home")}>Home</button>
-            
-            {/* Dashboard only visible if logged in */}
-            {user && (
-              <button className={`nav-item highlight ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
-            )}
+            <div className="nav-group">
+              <button className={`nav-item ${tab === "home" ? "active" : ""}`} onClick={() => setTab("home")}>Home</button>
+              {user && (
+                <button className={`nav-item highlight ${tab === "dashboard" ? "active" : ""}`} onClick={() => setTab("dashboard")}>Dashboard</button>
+              )}
+            </div>
             
             <div className="nav-section-title">Learn</div>
-            <button className={`nav-item ${tab === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Dictionary Guide</button>
+            <div className="nav-group indented">
+              <button className={`nav-item ${tab === "guide" ? "active" : ""}`} onClick={() => setTab("guide")}>Dictionary Guide</button>
+            </div>
             
             <div className="nav-section-title">Practice</div>
-            <button className={`nav-item ${tab === "predict" ? "active" : ""}`} onClick={() => setTab("predict")}>Free Practice</button>
-            <button className={`nav-item ${tab === "quiz" ? "active" : ""}`} onClick={() => setTab("quiz")}>Alphabet Quiz</button>
-            <button className={`nav-item ${tab === "word" ? "active" : ""}`} onClick={() => setTab("word")}>Spelling Bee</button>
-            <button className={`nav-item ${tab === "phrases" ? "active" : ""}`} onClick={() => setTab("phrases")}>Real Phrases</button>
-            <button className={`nav-item ${tab === "sentence" ? "active" : ""}`} onClick={() => setTab("sentence")}>Sentence Typer</button>
+            <div className="nav-group indented">
+              <button className={`nav-item ${tab === "predict" ? "active" : ""}`} onClick={() => setTab("predict")}>Practice</button>
+              <button className={`nav-item ${tab === "quiz" ? "active" : ""}`} onClick={() => setTab("quiz")}>Alphabet Quiz</button>
+              <button className={`nav-item ${tab === "word" ? "active" : ""}`} onClick={() => setTab("word")}>Spelling Bee</button>
+              <button className={`nav-item ${tab === "phrases" ? "active" : ""}`} onClick={() => setTab("phrases")}>Phrase Drills</button>
+              <button className={`nav-item ${tab === "sentence" ? "active" : ""}`} onClick={() => setTab("sentence")}>Sign & Speak</button>
+            </div>
           </nav>
         </aside>
 
@@ -491,11 +523,12 @@ function App() {
         <main className="content-area">
           <div className="content-wrapper">
 
+            {/* STATIC VIEWS */}
             {tab === "home" && (
-              <div className="view-container">
+              <div className="view-container center-text">
                 <h1 className="hero-title">Master Sign Language with AI</h1>
                 <p className="hero-subtitle">
-                  Practice the alphabet, test your spelling speed, and learn real-world phrases with instant, real-time feedback powered by neural networks.
+                  Practice the alphabet, test your spelling speed, and drill real-world phrases with instant, real-time feedback.
                 </p>
                 <div className="button-group">
                   <button className="btn primary lg" onClick={() => setTab(user ? "dashboard" : "login")}>
@@ -549,65 +582,134 @@ function App() {
               </div>
             )}
 
+            {/* --- THE BENTO BOX DASHBOARD --- */}
             {tab === "dashboard" && user && (
               <div className="view-container align-left">
                 <div className="dashboard-header">
                   <div>
                     <h2 className="section-title">Hello, {user.name}</h2>
-                    <p className="subtitle">Here is your learning progress.</p>
+                    <p className="subtitle">Here is your learning overview.</p>
                   </div>
                   <div className="badge success">Active Learner</div>
                 </div>
 
-                <div className="metrics-grid">
-                  <div className="metric-card">
-                    <span className="metric-label">Questions Answered</span>
-                    <span className="metric-value">{quizStats.length}</span>
-                  </div>
-                  <div className="metric-card">
-                    <span className="metric-label">Total Correct</span>
-                    <span className="metric-value success">{quizStats.filter(s => s.correct).length}</span>
-                  </div>
-                  <div className="metric-card">
-                    <span className="metric-label">Current Focus</span>
-                    <span className="metric-value focus">Alphabet</span>
-                  </div>
-                </div>
-
-                <div className="panel table-panel">
-                  <h3 className="panel-title">Recent Quiz History</h3>
-                  {quizStats.length === 0 ? (
-                    <div className="empty-state">
-                      <p>No practice data available yet.</p>
-                      <button className="btn primary" onClick={() => setTab("quiz")}>Start a Quiz</button>
+                {!dashboardData ? (
+                   <div className="empty-state panel">
+                     <p>You haven't generated any practice data yet!</p>
+                     <button className="btn primary mt-20" onClick={() => setTab("quiz")}>Take an Alphabet Quiz</button>
+                   </div>
+                ) : (
+                  <div className="bento-layout">
+                    
+                    {/* Row 1: High Level Stats */}
+                    <div className="bento-row">
+                      <div className="bento-card stat-card">
+                        <span className="bento-label">Questions Answered</span>
+                        <span className="bento-value">{dashboardData.totalAttempts}</span>
+                      </div>
+                      <div className="bento-card stat-card">
+                        <span className="bento-label">Global Accuracy</span>
+                        <div className="bento-progress-container">
+                          <span className="bento-value success">{dashboardData.accuracy}%</span>
+                          <div className="progress-bar-bg">
+                             <div className="progress-bar-fill" style={{ width: `${dashboardData.accuracy}%` }}></div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bento-card stat-card">
+                        <span className="bento-label">Daily Goal</span>
+                        <span className="bento-value focus">15 min</span>
+                      </div>
                     </div>
-                  ) : (
-                    renderAnalytics() 
-                  )}
-                </div>
-              </div>
-            )}
 
-            {/* CAMERA SECTION (Hidden on static pages) */}
-            <div className="camera-section" style={{ display: hideCameraTabs.includes(tab) ? "none" : "flex" }}>
-              <div className="camera-wrapper">
-                <video ref={videoRef} autoPlay playsInline muted />
-                {!isCameraRunning && (
-                  <div className="camera-overlay">
-                    <button className="btn primary" onClick={startCamera}>Enable Camera Feed</button>
+                    {/* Row 2: Heatmap & Weak Spots */}
+                    <div className="bento-row split-2-1">
+                      <div className="bento-card">
+                        <h3 className="bento-title">Alphabet Heatmap</h3>
+                        <p className="bento-desc">Visual breakdown of your proficiency across all 26 letters.</p>
+                        <div className="heatmap-grid">
+                          {dashboardData.heatmap.map((h, i) => (
+                            <div key={i} className={`heat-cell ${h.status}`} title={`${h.letter}: ${h.attempts > 0 ? Math.round(h.acc*100) + '%' : 'Unpracticed'}`}>
+                              {h.letter}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <div className="bento-card flex-col">
+                        <h3 className="bento-title">Needs Review</h3>
+                        <p className="bento-desc">Your lowest accuracy signs.</p>
+                        {dashboardData.weakSpots.length > 0 ? (
+                          <div className="weak-spots-list">
+                            {dashboardData.weakSpots.map((ws, i) => (
+                              <div key={i} className="weak-item">
+                                <div className="weak-letter">{ws.letter}</div>
+                                <div className="weak-acc danger">{Math.round(ws.acc * 100)}% acc</div>
+                              </div>
+                            ))}
+                            <button className="btn primary full-width mt-20" onClick={() => setTab("quiz")}>Drill Weak Spots</button>
+                          </div>
+                        ) : (
+                          <div className="empty-state-mini">All good! Keep practicing.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Row 3: Leaderboards */}
+                    <div className="bento-row split-half">
+                      <div className="bento-card">
+                        <h3 className="bento-title">⚡ Fastest Signs</h3>
+                        <div className="leaderboard">
+                          {dashboardData.fastest.length > 0 ? dashboardData.fastest.map((f, i) => (
+                            <div key={i} className="leader-row">
+                              <span className="leader-rank">#{i+1}</span>
+                              <span className="leader-letter">{f.letter}</span>
+                              <span className="leader-time">{f.avgTime.toFixed(1)}s avg</span>
+                            </div>
+                          )) : <p className="bento-desc mt-20">Not enough data.</p>}
+                        </div>
+                      </div>
+
+                      <div className="bento-card">
+                        <h3 className="bento-title">🐢 Slowest Signs</h3>
+                        <div className="leaderboard">
+                          {dashboardData.slowest.length > 0 ? dashboardData.slowest.map((s, i) => (
+                            <div key={i} className="leader-row">
+                              <span className="leader-rank">#{i+1}</span>
+                              <span className="leader-letter">{s.letter}</span>
+                              <span className="leader-time">{s.avgTime.toFixed(1)}s avg</span>
+                            </div>
+                          )) : <p className="bento-desc mt-20">Not enough data.</p>}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Row 4: Recent History */}
+                    <div className="bento-row">
+                      <div className="bento-card full-width">
+                        <h3 className="bento-title">Recent Activity Log</h3>
+                        <div className="stats-table-container">
+                          <table className="stats-table">
+                            <thead>
+                              <tr><th>#</th><th>Letter</th><th>Result</th><th>Time</th></tr>
+                            </thead>
+                            <tbody>
+                              {[...quizStats].reverse().slice(0, 10).map((stat, i) => (
+                                <tr key={i} className={stat.correct ? "row-correct" : "row-wrong"}>
+                                  <td>{quizStats.length - i}</td><td>{stat.letter}</td><td>{stat.correct ? "✅" : "❌"}</td><td>{stat.time}{stat.correct ? "s" : ""}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
                 )}
               </div>
-              {isCameraRunning && (
-                <div className="live-status">
-                  <span className="status-indicator"></span>
-                  Live Translation: <strong>{prediction || "Waiting for sign..."}</strong>
-                  {isRecording && <span className="recording-badge">Recording sequence</span>}
-                </div>
-              )}
-            </div>
+            )}
 
-            {/* LEARNING/PRACTICE VIEWS */}
             {tab === "guide" && (
               <div className="view-container align-left">
                 <h2 className="section-title">Common Phrases</h2>
@@ -631,97 +733,133 @@ function App() {
               </div>
             )}
 
-            {tab === "predict" && <div className="view-container"><h2 className="section-title">Free Practice Mode</h2><p className="subtitle">Show any sign to the camera to see the translation.</p></div>}
-
-            {tab === "quiz" && (
-              <div className="view-container">
-                {!quizActiveRef.current && total < MAX_Q && total === 0 ? (
-                  <button className="btn primary lg" onClick={startQuiz}>Start Alphabet Quiz</button>
-                ) : total >= MAX_Q ? (
-                  <div className="panel result-panel">
-                    <h2>Quiz Complete</h2>
-                    <h1 className="huge-score">{score} / {MAX_Q}</h1>
-                    <button className="btn primary mt-20" onClick={startQuiz}>Play Again</button>
+            {/* --- SPLIT LAYOUT FOR ACTIVE PRACTICE MODES --- */}
+            {!hideCameraTabs.includes(tab) && (
+              <div className="practice-layout">
+                
+                {/* LEFT: CAMERA */}
+                <div className="camera-section">
+                  <div className="camera-wrapper">
+                    <video ref={videoRef} autoPlay playsInline muted />
+                    {!isCameraRunning && (
+                      <div className="camera-overlay">
+                        <button className="btn primary" onClick={startCamera}>Enable Camera Feed</button>
+                      </div>
+                    )}
                   </div>
-                ) : (
-                  <div className="panel active-panel">
-                    <p className="subtitle">Question {total + 1} of {MAX_Q} — Score: {score}</p>
-                    <h1 className="target-display">{target}</h1>
-                    <button className="btn outline red mt-20" onClick={() => progressQuiz(false)}>Skip / Mark Wrong</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {tab === "word" && (
-              <div className="view-container">
-                {!wordActiveRef.current && !wordComplete ? (
-                   <button className="btn primary lg" onClick={startWordMode} disabled={isFetchingWord}>
-                     {isFetchingWord ? "Loading..." : "Start Spelling Bee"}
-                   </button>
-                ) : wordComplete ? (
-                  <div className="panel result-panel">
-                    <h2>Word Completed</h2>
-                    <div className="word-blocks mt-20">
-                      {word.split("").map((char, i) => (<span key={i} className={`block ${wordResults[i] ? "success" : "danger"}`}>{char}</span>))}
+                  {isCameraRunning && (
+                    <div className="live-status">
+                      <span className="status-indicator"></span>
+                      Live Translation: <strong>{prediction || "Waiting for sign..."}</strong>
+                      {isRecording && <span className="recording-badge">Recording sequence</span>}
                     </div>
-                    <button className="btn primary mt-20" onClick={startWordMode} disabled={isFetchingWord}>
-                      {isFetchingWord ? "Loading..." : "Next Word"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="panel active-panel">
-                    <p className="subtitle">5 seconds per letter</p>
-                    <div className="word-blocks mt-20">
-                      {word.split("").map((char, i) => {
-                        let status = "";
-                        if (i === wordProgress) status = "current";
-                        else if (i < wordProgress) status = wordResults[i] ? "success" : "danger";
-                        return (<span key={i} className={`block ${status}`}>{char}</span>);
-                      })}
+                  )}
+                </div>
+
+                {/* RIGHT: INTERACTIVE PANEL */}
+                <div className="practice-content">
+                  
+                  {tab === "predict" && (
+                    <div className="view-container">
+                      <h2 className="section-title">Practice Mode</h2>
+                      <p className="subtitle">Show any sign to the camera to see the translation.</p>
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
 
-            {tab === "phrases" && (
-              <div className="view-container">
-                {!phrase ? (
-                   <button className="btn primary lg" onClick={startPhraseMode}>Practice Phrases</button>
-                ) : phraseResult === 'correct' ? (
-                  <div className="panel result-panel">
-                    <h2>Excellent!</h2>
-                    <h1 className="target-display success">{phrase}</h1>
-                    <button className="btn primary mt-20" onClick={startPhraseMode}>Next Phrase</button>
-                  </div>
-                ) : phraseResult === 'wrong' ? (
-                  <div className="panel result-panel">
-                    <h2>Time's Up ⏳</h2>
-                    <h1 className="target-display danger">{phrase}</h1>
-                    <button className="btn primary mt-20" onClick={startPhraseMode}>Try Another</button>
-                  </div>
-                ) : (
-                  <div className="panel active-panel">
-                    <p className="subtitle">You have 10 seconds</p>
-                    <h1 className="target-display">{phrase}</h1>
-                  </div>
-                )}
-              </div>
-            )}
+                  {tab === "quiz" && (
+                    <div className="view-container">
+                      {!quizActiveRef.current && total < MAX_Q && total === 0 ? (
+                        <button className="btn primary lg" onClick={startQuiz}>Start Alphabet Quiz</button>
+                      ) : total >= MAX_Q ? (
+                        <div className="panel result-panel">
+                          <h2>Quiz Complete</h2>
+                          <h1 className="huge-score">{score} / {MAX_Q}</h1>
+                          <button className="btn primary mt-20" onClick={startQuiz}>Play Again</button>
+                        </div>
+                      ) : (
+                        <div className="panel active-panel">
+                          <p className="subtitle">Question {total + 1} of {MAX_Q} — Score: {score}</p>
+                          <h1 className="target-display">{target}</h1>
+                          <button className="btn outline red mt-20" onClick={() => progressQuiz(false)}>Skip / Mark Wrong</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-            {tab === "sentence" && (
-              <div className="view-container">
-                <div className="panel typer-panel">
-                  <h2 className="typed-sentence">{sentence || <span className="placeholder">Start signing to type...</span>}</h2>
+                  {tab === "word" && (
+                    <div className="view-container">
+                      {!wordActiveRef.current && !wordComplete ? (
+                         <button className="btn primary lg" onClick={startWordMode} disabled={isFetchingWord}>
+                           {isFetchingWord ? "Loading..." : "Start Spelling Bee"}
+                         </button>
+                      ) : wordComplete ? (
+                        <div className="panel result-panel">
+                          <h2>Word Completed</h2>
+                          <div className="word-blocks mt-20">
+                            {word.split("").map((char, i) => (<span key={i} className={`block ${wordResults[i] ? "success" : "danger"}`}>{char}</span>))}
+                          </div>
+                          <button className="btn primary mt-20" onClick={startWordMode} disabled={isFetchingWord}>
+                            {isFetchingWord ? "Loading..." : "Next Word"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="panel active-panel">
+                          <p className="subtitle">5 seconds per letter</p>
+                          <div className="word-blocks mt-20">
+                            {word.split("").map((char, i) => {
+                              let status = "";
+                              if (i === wordProgress) status = "current";
+                              else if (i < wordProgress) status = wordResults[i] ? "success" : "danger";
+                              return (<span key={i} className={`block ${status}`}>{char}</span>);
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tab === "phrases" && (
+                    <div className="view-container">
+                      {!phrase ? (
+                         <button className="btn primary lg" onClick={startPhraseMode}>Start Phrase Drills</button>
+                      ) : phraseResult === 'correct' ? (
+                        <div className="panel result-panel">
+                          <h2>Excellent!</h2>
+                          <h1 className="target-display success">{phrase}</h1>
+                          <button className="btn primary mt-20" onClick={startPhraseMode}>Next Drill</button>
+                        </div>
+                      ) : phraseResult === 'wrong' ? (
+                        <div className="panel result-panel">
+                          <h2>Time's Up ⏳</h2>
+                          <h1 className="target-display danger">{phrase}</h1>
+                          <button className="btn primary mt-20" onClick={startPhraseMode}>Try Another</button>
+                        </div>
+                      ) : (
+                        <div className="panel active-panel">
+                          <p className="subtitle">Perform the drill within 10 seconds</p>
+                          <h1 className="target-display">{phrase}</h1>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {tab === "sentence" && (
+                    <div className="view-container">
+                      <h2 className="section-title" style={{marginBottom: "24px"}}>Sign & Speak</h2>
+                      <div className="panel typer-panel">
+                        <h2 className="typed-sentence">{sentence || <span className="placeholder">Start signing to compose text...</span>}</h2>
+                      </div>
+                      <div className="button-group mt-20">
+                        <button className="btn primary" onClick={speakSentence} disabled={!sentence}>Speak</button>
+                        <button className="btn outline red" onClick={() => { setSentence(""); lastAddedRef.current = ""; lastAddedTimeRef.current = 0;}}>Clear</button>
+                      </div>
+                    </div>
+                  )}
+                  
                 </div>
-                <div className="button-group mt-20">
-                  <button className="btn primary" onClick={speakSentence} disabled={!sentence}>Speak</button>
-                  <button className="btn outline red" onClick={() => { setSentence(""); lastAddedRef.current = ""; lastAddedTimeRef.current = 0;}}>Clear</button>
-                </div>
               </div>
             )}
-
+            
           </div>
         </main>
       </div>
