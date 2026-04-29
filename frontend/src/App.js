@@ -2,10 +2,26 @@ import React, { useRef, useState, useEffect, useCallback } from "react";
 import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const WORDS = ["HELLO", "WORLD", "APPLE", "REACT", "SIGN", "WATER", "PLEASE", "THANK"];
 const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
+
+// A fallback list just in case the user plays offline or the API goes down
+const FALLBACK_WORDS = ["APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", "LIGHT", "MUSIC", "WORLD", "HELLO"];
+
+// Function to fetch a dynamic word of ANY length from the public API
+const fetchRandomWord = async () => {
+  try {
+    // Removed the length restriction to get a truly random word
+    const res = await fetch(`https://random-word-api.herokuapp.com/word`);
+    if (!res.ok) throw new Error("API Network error");
+    const data = await res.json();
+    return data[0].toUpperCase();
+  } catch (err) {
+    console.warn("Using fallback word list due to API error.");
+    return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
+  }
+};
 
 function App() {
   const videoRef = useRef(null);
@@ -54,9 +70,10 @@ function App() {
   const [wordProgress, setWordProgress] = useState(0);
   const [wordResults, setWordResults] = useState([]); 
   const [wordComplete, setWordComplete] = useState(false);
+  const [isFetchingWord, setIsFetchingWord] = useState(false);
 
   const [phrase, setPhrase] = useState("");
-  const [phraseResult, setPhraseResult] = useState(null); // null = playing, 'correct' = win, 'wrong' = timeout
+  const [phraseResult, setPhraseResult] = useState(null); 
 
   const setTab = (newTab) => {
     setTabState(newTab);
@@ -86,8 +103,6 @@ function App() {
 
   const recordAndPredictSequence = useCallback(() => {
     if (!videoRef.current || !videoRef.current.srcObject) return;
-    
-    // Don't record if we aren't actively playing the phrase game (or if already recording)
     if (tabRef.current === "phrases" && !phraseActiveRef.current) return;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
 
@@ -117,7 +132,6 @@ function App() {
         });
         const data = await res.json();
         
-        // Timer logic: start the 10-second countdown once the first recording finishes
         if (tabRef.current === "phrases" && phraseActiveRef.current) {
           if (!phraseHandDetectedRef.current) {
             phraseHandDetectedRef.current = true;
@@ -127,7 +141,6 @@ function App() {
           const currentPred = data.label ? data.label.trim() : "";
           setPrediction(currentPred);
 
-          // If they got it right, stop the game and show success
           if (currentPred === phraseTargetRef.current) {
             phraseActiveRef.current = false;
             setPhraseResult('correct');
@@ -141,7 +154,6 @@ function App() {
 
     mediaRecorder.start();
     
-    // Stop recording after 3000ms (3 seconds) to ensure 60 frames are captured
     setTimeout(() => {
       if (mediaRecorder.state === "recording") {
         mediaRecorder.stop();
@@ -247,7 +259,6 @@ function App() {
     setPhrase(randomPhrase);
     phraseTargetRef.current = randomPhrase;
     
-    // Reset all states and timers for the new phrase
     setPhraseResult(null);
     phraseActiveRef.current = true;
     phraseStartTimeRef.current = 0;
@@ -268,10 +279,13 @@ function App() {
     }
   }, []);
 
-  const startWordMode = () => {
-    const randomWord = WORDS[Math.floor(Math.random() * WORDS.length)];
-    setWord(randomWord);
-    targetWordRef.current = randomWord;
+  const startWordMode = async () => {
+    setIsFetchingWord(true);
+    const dynamicWord = await fetchRandomWord();
+    
+    setWord(dynamicWord);
+    targetWordRef.current = dynamicWord;
+    
     setWordProgress(0);
     setWordResults([]);
     wordIndexRef.current = 0;
@@ -280,6 +294,8 @@ function App() {
     stableCountRef.current = 0;
     wordHandDetectedRef.current = false;
     wordStartTimeRef.current = 0;
+    
+    setIsFetchingWord(false);
   };
 
   const progressQuiz = useCallback((isCorrect) => {
@@ -341,7 +357,6 @@ function App() {
     }
   }, [isCameraRunning, tab, processFrame, recordAndPredictSequence]);
 
-  // Global Time-Out Checker for Quiz, Word, and Phrases
   useEffect(() => {
     const timerInterval = setInterval(() => {
       const now = Date.now();
@@ -358,10 +373,9 @@ function App() {
         }
       }
 
-      // New Phrase Timeout Logic
       if (tabRef.current === "phrases" && phraseActiveRef.current) {
         if (phraseHandDetectedRef.current && phraseStartTimeRef.current > 0) {
-          if (now - phraseStartTimeRef.current >= 10000) { // 10-second limit
+          if (now - phraseStartTimeRef.current >= 10000) { 
             phraseActiveRef.current = false;
             setPhraseResult('wrong');
           }
@@ -373,7 +387,6 @@ function App() {
     return () => clearInterval(timerInterval);
   }, [progressQuiz, progressWord, wordComplete]);
 
-  // ================= KEYBOARD =================
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
@@ -494,14 +507,18 @@ function App() {
       {tab === "word" && (
         <div className="center mt-20">
           {!wordActiveRef.current && !wordComplete ? (
-             <button className="btn blue" onClick={startWordMode}>Start Spelling Bee</button>
+             <button className="btn blue" onClick={startWordMode} disabled={isFetchingWord}>
+               {isFetchingWord ? "Fetching Word..." : "Start Spelling Bee"}
+             </button>
           ) : wordComplete ? (
             <div className="result-card">
               <h2>Word Complete!</h2>
               <div className="word-display mt-20">
                 {word.split("").map((char, i) => (<span key={i} className={`word-char ${wordResults[i] ? "completed" : "wrong"}`}>{char}</span>))}
               </div>
-              <button className="btn blue mt-20" onClick={startWordMode}>Next Word</button>
+              <button className="btn blue mt-20" onClick={startWordMode} disabled={isFetchingWord}>
+                {isFetchingWord ? "Fetching..." : "Next Word"}
+              </button>
             </div>
           ) : (
             <div className="word-active">
@@ -520,7 +537,6 @@ function App() {
         </div>
       )}
 
-      {/* --- UPDATED PHRASES MODE UI --- */}
       {tab === "phrases" && (
         <div className="center mt-20">
           {!phrase ? (
