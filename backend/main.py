@@ -25,6 +25,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Dynamic phrase prediction tuning
+MIN_DYNAMIC_FRAMES = 30
+DYNAMIC_SMOOTHING = 3
+DYNAMIC_CONFIDENCE = 0.65
+
 # ================= LOAD MODELS =================
 print("⏳ Loading models... Please wait.")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -156,11 +161,13 @@ async def predict_sequence(file: UploadFile = File(...)):
     return {"label": predicted_label, "confidence": confidence}
 
 # ================= WEBSOCKET ROUTE FOR REAL-TIME PREDICTIONS =================
-sequence_window = deque(maxlen=60)
 
 @app.websocket("/ws/predict")
 async def websocket_predict(websocket: WebSocket):
     await websocket.accept()
+    sequence_window = deque(maxlen=60)
+    prediction_history = deque(maxlen=DYNAMIC_SMOOTHING)
+
     try:
         while True:
             payload = await websocket.receive_json()
@@ -168,7 +175,14 @@ async def websocket_predict(websocket: WebSocket):
             landmarks = payload.get("landmarks", [])
             label = ""
 
+            if mode == "reset":
+                sequence_window.clear()
+                prediction_history.clear()
+                await websocket.send_json({"type": "status", "message": "sequence reset"})
+                continue
+
             if mode == "static" and len(landmarks) == 63:
+                sequence_window.clear()
                 normalized = normalize_landmarks(landmarks, is_left_hand=False)
                 data = np.array(normalized).reshape(1, -1)
                 preds = static_model.predict(data, verbose=0)
@@ -177,16 +191,29 @@ async def websocket_predict(websocket: WebSocket):
 
             elif mode == "dynamic" and len(landmarks) == 126:
                 sequence_window.append(landmarks)
-                if len(sequence_window) == sequence_window.maxlen:
-                    sequence_data = np.array([list(sequence_window)])
-                    prediction = sequence_model.predict(sequence_data, verbose=0)
-                    class_index = np.argmax(prediction[0])
-                    confidence = float(prediction[0][class_index])
-                    if confidence > 0.7:
-                        label = str(sequence_labels[class_index])
+                if len(sequence_window) < MIN_DYNAMIC_FRAMES:
+                    await websocket.send_json({"type": "status", "message": f"buffering {len(sequence_window)}/{sequence_window.maxlen}"})
+                    continue
+
+                sequence_list = list(sequence_window)
+                if len(sequence_list) < sequence_window.maxlen:
+                    padding = np.zeros((sequence_window.maxlen - len(sequence_list), 126), dtype=np.float32)
+                    sequence_data = np.vstack([padding, np.array(sequence_list, dtype=np.float32)])
+                else:
+                    sequence_data = np.array(sequence_list, dtype=np.float32)
+
+                probabilities = sequence_model.predict(np.expand_dims(sequence_data, axis=0), verbose=0)[0]
+                prediction_history.append(probabilities)
+                averaged = np.mean(np.array(prediction_history), axis=0)
+                class_index = int(np.argmax(averaged))
+                confidence = float(averaged[class_index])
+
+                if confidence > DYNAMIC_CONFIDENCE:
+                    raw_label = str(sequence_labels[class_index])
+                    label = raw_label.replace("_", " ").title()
                     await websocket.send_json({"type": "prediction", "label": label})
                 else:
-                    await websocket.send_json({"type": "status", "message": f"buffering {len(sequence_window)}/{sequence_window.maxlen}"})
+                    await websocket.send_json({"type": "status", "message": f"waiting for confident gesture ({len(sequence_window)}/{sequence_window.maxlen})"})
 
             else:
                 await websocket.send_json({"type": "status", "message": "waiting for valid landmarks..."})
