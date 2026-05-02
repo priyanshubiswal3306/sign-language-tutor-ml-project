@@ -1,32 +1,12 @@
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { Hands } from "@mediapipe/hands";
-import { Camera } from "@mediapipe/camera_utils";
 import "./App.css";
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
-const DOUBLE_LETTER_COOLDOWN = 3000;
+const DOUBLE_LETTER_COOLDOWN = 3000; 
 
-// Maps model output labels (e.g. "thank_you") → display strings (e.g. "Thank you").
-// Extend this object whenever you add new phrases to your sequence model.
-const PHRASE_LABEL_MAP = {
-  "thank_you": "Thank you",
-  "welcome":   "Welcome",
-  "yes":       "Yes",
-  "no":        "No",
-  "help":      "Help",
-  "sorry":     "Sorry",
-  "eat":       "Eat",
-  "hello":     "Hello",
-  "bye":       "Bye",
-  "stop":      "Stop",
-};
-
-// Convert a raw sequence-model label to its human-readable display string.
-const normalizeLabel = (raw) =>
-  PHRASE_LABEL_MAP[raw] ?? PHRASE_LABEL_MAP[raw.toLowerCase()] ?? raw;
-
+// EXTREME FALLBACK LIST: 100 pre-defined words
 const FALLBACK_WORDS = [
   "APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", 
   "LIGHT", "MUSIC", "WORLD", "HELLO", "REACT", "PYTHON", "CODING", "HOUSE", "MOUSE", "CHAIR", 
@@ -40,33 +20,57 @@ const FALLBACK_WORDS = [
   "SCHOOL", "CLASS", "GRADE", "STUDY", "LEARN", "TEACH", "THINK", "SOLVE", "BUILD", "CREATE"
 ];
 
+// Local array to hold a batch of API words
 let wordPool = [];
 
 const fetchRandomWord = async () => {
-  if (wordPool.length > 0) return wordPool.pop();
+  // 1. If we have words waiting in the pool, return one INSTANTLY
+  if (wordPool.length > 0) {
+    return wordPool.pop();
+  }
+
+  // 2. Set up a strict 5-second timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000); 
+
   try {
-    const res = await fetch(`https://random-word-api.herokuapp.com/word?number=20`, { signal: controller.signal });
+    // 3. Request a batch of 20 words, passing in our abort controller
+    const res = await fetch(`https://random-word-api.herokuapp.com/word?number=20`, {
+      signal: controller.signal
+    });
+    
+    // Clear the timeout if the server answers quickly
     clearTimeout(timeoutId);
+
     if (!res.ok) throw new Error("API Network error");
+    
     const data = await res.json();
+    
+    // Save all the words to our local pool in uppercase
     wordPool = data.map(w => w.toUpperCase());
+    
+    // Return the first one for the immediate game
     return wordPool.pop();
+
   } catch (err) {
+    // If it takes more than 5s, or API breaks, drop down to the 100 local words
     clearTimeout(timeoutId);
+    console.warn("API was too slow or failed. Using 100-word instant fallback.");
     return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
   }
 };
 
 function App() {
   const videoRef = useRef(null);
-  const ws = useRef(null); 
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]); 
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
   const [tab, setTabState] = useState("home");
   const tabRef = useRef("home");
 
+  // --- LOCAL STORAGE: USER AUTH ---
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('signLanguageTutorUser');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -74,6 +78,7 @@ function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
+  // --- LOCAL STORAGE: ANALYTICS ---
   const [quizStats, setQuizStats] = useState(() => {
     const savedStats = localStorage.getItem('signLanguageStats');
     return savedStats ? JSON.parse(savedStats) : [];
@@ -83,8 +88,10 @@ function App() {
     localStorage.setItem('signLanguageStats', JSON.stringify(quizStats));
   }, [quizStats]);
 
+  // --- DASHBOARD ANALYTICS ENGINE ---
   const dashboardData = useMemo(() => {
     if (!quizStats || quizStats.length === 0) return null;
+
     let totalCorrect = 0;
     const letterData = {};
     LETTERS.forEach(l => letterData[l] = { attempts: 0, correct: 0, times: [] });
@@ -101,6 +108,8 @@ function App() {
     });
 
     const accuracy = Math.round((totalCorrect / quizStats.length) * 100);
+
+    // Heatmap & Leaderboard Data
     const heatmap = [];
     let validTimes = [];
 
@@ -117,23 +126,26 @@ function App() {
       }
 
       heatmap.push({ letter: l, status, acc, avgTime, attempts: data.attempts });
-      if (avgTime !== null && acc !== null) validTimes.push({ letter: l, avgTime, acc });
+      if (avgTime !== null && acc !== null) {
+        validTimes.push({ letter: l, avgTime, acc });
+      }
     });
 
+    // Fastest & Slowest (Requires at least 1 correct attempt)
     validTimes.sort((a, b) => a.avgTime - b.avgTime);
     const fastest = validTimes.slice(0, 3);
     const slowest = [...validTimes].reverse().slice(0, 3);
-    const weakSpots = heatmap.filter(h => h.attempts > 0 && h.acc < 0.7).sort((a, b) => a.acc - b.acc).slice(0, 3);
+
+    // Weak Spots (Low accuracy)
+    const weakSpots = heatmap
+      .filter(h => h.attempts > 0 && h.acc < 0.7)
+      .sort((a, b) => a.acc - b.acc)
+      .slice(0, 3);
 
     return { totalAttempts: quizStats.length, accuracy, heatmap, fastest, slowest, weakSpots };
   }, [quizStats]);
 
-  // Frontend State Managers for AI Processing
-  const sequenceBufferRef = useRef([]);
-  const frameCounterRef = useRef(0);
-  const dynamicCooldownRef = useRef(0);
-  const lastStaticSendRef = useRef(0);
-
+  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
@@ -157,6 +169,7 @@ function App() {
 
   const [prediction, setPrediction] = useState("");
   const [isCameraRunning, setIsCameraRunning] = useState(false);
+  const [isRecording, setIsRecording] = useState(false); 
 
   const [sentence, setSentence] = useState("");
   const [score, setScore] = useState(0);
@@ -184,6 +197,106 @@ function App() {
     utterance.rate = 0.9; 
     window.speechSynthesis.speak(utterance);
   };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setIsCameraRunning(true);
+      }
+    } catch (err) {
+      console.error("Failed to start camera:", err);
+      alert("Please allow camera access.");
+    }
+  };
+
+  const recordAndPredictSequence = useCallback(() => {
+    if (!videoRef.current || !videoRef.current.srcObject) return;
+    if (tabRef.current === "phrases" && !phraseActiveRef.current) return;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") return;
+
+    setIsRecording(true);
+    recordedChunksRef.current = [];
+
+    const stream = videoRef.current.srcObject;
+    const mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    mediaRecorderRef.current = mediaRecorder;
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        recordedChunksRef.current.push(e.data);
+      }
+    };
+
+    mediaRecorder.onstop = async () => {
+      setIsRecording(false);
+      const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+      const formData = new FormData();
+      formData.append("file", blob); 
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/predict_sequence", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        
+        if (tabRef.current === "phrases" && phraseActiveRef.current) {
+          if (!phraseHandDetectedRef.current) {
+            phraseHandDetectedRef.current = true;
+            phraseStartTimeRef.current = Date.now();
+          }
+          
+          const currentPred = data.label ? data.label.trim() : "";
+          setPrediction(currentPred);
+
+          if (currentPred === phraseTargetRef.current) {
+            phraseActiveRef.current = false;
+            setPhraseResult('correct');
+          }
+        }
+      } catch (error) {
+        console.error("Sequence Prediction API Error:", error);
+      }
+    };
+
+    mediaRecorder.start();
+    setTimeout(() => {
+      if (mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+      }
+    }, 3000); 
+  }, []);
+
+  const processFrame = useCallback(async () => {
+    if (!videoRef.current || videoRef.current.readyState < 2) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 300;
+    canvas.height = 300;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(videoRef.current, 0, 0, 300, 300);
+
+    canvas.toBlob(async (blob) => {
+      const formData = new FormData();
+      formData.append("file", blob);
+
+      try {
+        const res = await fetch("http://127.0.0.1:8000/predict", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        const currentPred = data.label ? data.label.trim() : "";
+        
+        setPrediction(currentPred);
+        if (currentPred) handleAppLogic(currentPred);
+      } catch (error) {
+        console.error("Static Prediction API Error:", error);
+      }
+    }, "image/jpeg");
+  }, []);
 
   const handleAppLogic = (currentPred) => {
     const currentTab = tabRef.current;
@@ -240,162 +353,7 @@ function App() {
         stableCountRef.current = 0;
       }
     }
-
-    if (currentTab === "phrases" && phraseActiveRef.current) {
-      // BUG FIX: start the clock when the first hand is detected,
-      // so the 10-second timeout in the interval can actually fire.
-      if (!phraseHandDetectedRef.current) {
-        phraseHandDetectedRef.current = true;
-        phraseStartTimeRef.current = Date.now();
-      }
-      if (currentPred === phraseTargetRef.current) {
-        phraseActiveRef.current = false;
-        setPhraseResult('correct');
-      }
-    }
   };
-
-  const handleAppLogicRef = useRef(handleAppLogic);
-  useEffect(() => { handleAppLogicRef.current = handleAppLogic; });
-
-  // ================= WEBSOCKET CONNECTION =================
-  useEffect(() => {
-    let isMounted = true;
-    let reconnectTimeout;
-
-    const connect = () => {
-      ws.current = new WebSocket("ws://127.0.0.1:8000/ws/predict");
-
-      ws.current.onopen = () => console.log("🟢 Connected to AI Backend");
-      
-      ws.current.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.type === "prediction") {
-          // Normalise model labels (e.g. "thank_you") to display strings ("Thank you")
-          // so every downstream consumer (quiz, phrase drills, sentence) sees the same format.
-          const currentPred = normalizeLabel(data.label.trim());
-          setPrediction(currentPred);
-          handleAppLogicRef.current(currentPred);
-
-          // Trigger cooldown to prevent spamming after a dynamic prediction
-          dynamicCooldownRef.current = 60;
-          sequenceBufferRef.current = [];
-        } else if (data.type === "status") {
-          setPrediction(`${data.message}`);
-        }
-      };
-
-      ws.current.onclose = () => {
-        if (isMounted) {
-          console.log("🔴 WebSocket Closed. Reconnecting in 2 seconds...");
-          setPrediction("Server Disconnected. Retrying...");
-          reconnectTimeout = setTimeout(connect, 2000);
-        }
-      };
-    };
-
-    connect(); 
-
-    return () => {
-      isMounted = false;
-      clearTimeout(reconnectTimeout);
-      if (ws.current) ws.current.close();
-    };
-  }, []);
-
-  // ================= MEDIAPIPE CAMERA LOOP =================
-  useEffect(() => {
-    if (!isCameraRunning || !videoRef.current) return;
-
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
-
-    hands.setOptions({
-      maxNumHands: 2,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.7
-    });
-
-    hands.onResults((results) => {
-      if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
-
-      const currentTab = tabRef.current;
-      const mode = (currentTab === "phrases" || currentTab === "sentence") ? "dynamic" : "static";
-
-      // Package Hands safely into an array of objects
-      let detectedHands = [];
-      if (results.multiHandLandmarks) {
-        detectedHands = results.multiHandLandmarks.map((landmarks, index) => {
-          let label = "Right";
-          const handedness = results.multiHandedness[index];
-          if (handedness && handedness.label) label = handedness.label;
-          
-          const coords = [];
-          landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
-          return { label, landmarks: coords };
-        });
-      }
-
-      // --- DYNAMIC MODE (60-Frame Buffered Strategy) ---
-      if (mode === "dynamic") {
-        if (dynamicCooldownRef.current > 0) {
-            dynamicCooldownRef.current -= 1;
-            return; // Don't record frames while cooling down
-        }
-
-        sequenceBufferRef.current.push(detectedHands);
-        if (sequenceBufferRef.current.length > 60) {
-            sequenceBufferRef.current.shift(); // Keep exactly 60
-        }
-
-        frameCounterRef.current += 1;
-
-        // Fire to backend exactly 3 times a second (every 10 frames) if full
-        if (sequenceBufferRef.current.length === 60 && frameCounterRef.current % 10 === 0) {
-            ws.current.send(JSON.stringify({ 
-                mode: "dynamic", 
-                sequence: sequenceBufferRef.current 
-            }));
-        }
-      } 
-      
-      // --- STATIC MODE (Throttled Strategy) ---
-      else {
-        const now = Date.now();
-        // Only fire if 500ms has passed AND hands are actually present
-        if (now - lastStaticSendRef.current > 500 && detectedHands.length > 0) {
-            ws.current.send(JSON.stringify({ 
-                mode: "static", 
-                hands: detectedHands 
-            }));
-            lastStaticSendRef.current = now;
-        }
-      }
-    });
-
-    const camera = new Camera(videoRef.current, {
-      onFrame: async () => {
-        if (videoRef.current && videoRef.current.readyState >= 2 && videoRef.current.videoWidth > 0) {
-          try {
-            await hands.send({ image: videoRef.current });
-          } catch (e) {
-            console.warn("MediaPipe Frame Drop:", e);
-          }
-        }
-      },
-      width: 640,
-      height: 480
-    });
-
-    setTimeout(() => { camera.start(); }, 100);
-
-    return () => {
-      camera.stop();
-      hands.close();
-    };
-  }, [isCameraRunning]);
-
 
   const startPhraseMode = () => {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
@@ -473,6 +431,25 @@ function App() {
     quizStartTimeRef.current = 0;
   };
 
+  // ================= INTERVALS & TIMERS =================
+  useEffect(() => {
+    let interval;
+    const noCameraTabs = ["home", "login", "dashboard", "guide"];
+    if (isCameraRunning && !noCameraTabs.includes(tab)) {
+      if (tab === "phrases") {
+        interval = setInterval(() => recordAndPredictSequence(), 3500); 
+      } else {
+        interval = setInterval(() => processFrame(), 600);
+      }
+    }
+    return () => {
+        clearInterval(interval);
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+            mediaRecorderRef.current.stop();
+        }
+    }
+  }, [isCameraRunning, tab, processFrame, recordAndPredictSequence]);
+
   useEffect(() => {
     const timerInterval = setInterval(() => {
       const now = Date.now();
@@ -515,6 +492,7 @@ function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
+
   const handleLogout = () => {
     setUser(null); 
     setTab("home");
@@ -525,6 +503,8 @@ function App() {
 
   return (
     <div className="app-layout">
+      
+      {/* TOP NAVIGATION BAR */}
       <header className="topbar">
         <div className="topbar-left">
           <button className="icon-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
@@ -550,7 +530,10 @@ function App() {
         </div>
       </header>
 
+      {/* MAIN CONTENT AREA WITH SIDEBAR */}
       <div className="main-container">
+        
+        {/* COLLAPSIBLE LEFT SIDEBAR */}
         <aside className={`sidebar ${isSidebarOpen ? "open" : "closed"}`}>
           <nav className="sidebar-nav">
             <div className="nav-group">
@@ -576,9 +559,11 @@ function App() {
           </nav>
         </aside>
 
+        {/* SCROLLABLE CONTENT AREA */}
         <main className="content-area">
           <div className="content-wrapper">
 
+            {/* STATIC VIEWS */}
             {tab === "home" && (
               <div className="view-container center-text">
                 <h1 className="hero-title">Master Sign Language with AI</h1>
@@ -602,24 +587,42 @@ function App() {
                   
                   <div className="form-group">
                     <label>Email Address</label>
-                    <input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="name@example.com"/>
+                    <input 
+                      type="email" 
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="name@example.com"
+                    />
                   </div>
                   <div className="form-group">
                     <label>Password (Demo: Any)</label>
-                    <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••"/>
+                    <input 
+                      type="password" 
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="••••••••"
+                    />
                   </div>
-                  <button className="btn primary full-width" onClick={() => {
+                  <button 
+                    className="btn primary full-width" 
+                    onClick={() => {
                       if(loginEmail.includes("@")) {
                         const newUser = { email: loginEmail, name: loginEmail.split("@")[0] };
                         setUser(newUser);
                         setTab("dashboard");
                         localStorage.setItem('signLanguageTutorUser', JSON.stringify(newUser));
-                      } else { alert("Please enter a valid email to test the login."); }
-                    }}>Continue</button>
+                      } else {
+                        alert("Please enter a valid email to test the login.");
+                      }
+                    }}
+                  >
+                    Continue
+                  </button>
                 </div>
               </div>
             )}
 
+            {/* --- THE BENTO BOX DASHBOARD --- */}
             {tab === "dashboard" && user && (
               <div className="view-container align-left">
                 <div className="dashboard-header">
@@ -637,6 +640,8 @@ function App() {
                    </div>
                 ) : (
                   <div className="bento-layout">
+                    
+                    {/* Row 1: High Level Stats */}
                     <div className="bento-row">
                       <div className="bento-card stat-card">
                         <span className="bento-label">Questions Answered</span>
@@ -657,16 +662,20 @@ function App() {
                       </div>
                     </div>
 
+                    {/* Row 2: Heatmap & Weak Spots */}
                     <div className="bento-row split-2-1">
                       <div className="bento-card">
                         <h3 className="bento-title">Alphabet Heatmap</h3>
                         <p className="bento-desc">Visual breakdown of your proficiency across all 26 letters.</p>
                         <div className="heatmap-grid">
                           {dashboardData.heatmap.map((h, i) => (
-                            <div key={i} className={`heat-cell ${h.status}`} title={`${h.letter}: ${h.attempts > 0 ? Math.round(h.acc*100) + '%' : 'Unpracticed'}`}>{h.letter}</div>
+                            <div key={i} className={`heat-cell ${h.status}`} title={`${h.letter}: ${h.attempts > 0 ? Math.round(h.acc*100) + '%' : 'Unpracticed'}`}>
+                              {h.letter}
+                            </div>
                           ))}
                         </div>
                       </div>
+                      
                       <div className="bento-card flex-col">
                         <h3 className="bento-title">Needs Review</h3>
                         <p className="bento-desc">Your lowest accuracy signs.</p>
@@ -680,35 +689,50 @@ function App() {
                             ))}
                             <button className="btn primary full-width mt-20" onClick={() => setTab("quiz")}>Drill Weak Spots</button>
                           </div>
-                        ) : (<div className="empty-state-mini">All good! Keep practicing.</div>)}
+                        ) : (
+                          <div className="empty-state-mini">All good! Keep practicing.</div>
+                        )}
                       </div>
                     </div>
 
+                    {/* Row 3: Leaderboards */}
                     <div className="bento-row split-half">
                       <div className="bento-card">
                         <h3 className="bento-title">⚡ Fastest Signs</h3>
                         <div className="leaderboard">
                           {dashboardData.fastest.length > 0 ? dashboardData.fastest.map((f, i) => (
-                            <div key={i} className="leader-row"><span className="leader-rank">#{i+1}</span><span className="leader-letter">{f.letter}</span><span className="leader-time">{f.avgTime.toFixed(1)}s avg</span></div>
+                            <div key={i} className="leader-row">
+                              <span className="leader-rank">#{i+1}</span>
+                              <span className="leader-letter">{f.letter}</span>
+                              <span className="leader-time">{f.avgTime.toFixed(1)}s avg</span>
+                            </div>
                           )) : <p className="bento-desc mt-20">Not enough data.</p>}
                         </div>
                       </div>
+
                       <div className="bento-card">
                         <h3 className="bento-title">🐢 Slowest Signs</h3>
                         <div className="leaderboard">
                           {dashboardData.slowest.length > 0 ? dashboardData.slowest.map((s, i) => (
-                            <div key={i} className="leader-row"><span className="leader-rank">#{i+1}</span><span className="leader-letter">{s.letter}</span><span className="leader-time">{s.avgTime.toFixed(1)}s avg</span></div>
+                            <div key={i} className="leader-row">
+                              <span className="leader-rank">#{i+1}</span>
+                              <span className="leader-letter">{s.letter}</span>
+                              <span className="leader-time">{s.avgTime.toFixed(1)}s avg</span>
+                            </div>
                           )) : <p className="bento-desc mt-20">Not enough data.</p>}
                         </div>
                       </div>
                     </div>
 
+                    {/* Row 4: Recent History */}
                     <div className="bento-row">
                       <div className="bento-card full-width">
                         <h3 className="bento-title">Recent Activity Log</h3>
                         <div className="stats-table-container">
                           <table className="stats-table">
-                            <thead><tr><th>#</th><th>Letter</th><th>Result</th><th>Time</th></tr></thead>
+                            <thead>
+                              <tr><th>#</th><th>Letter</th><th>Result</th><th>Time</th></tr>
+                            </thead>
                             <tbody>
                               {[...quizStats].reverse().slice(0, 10).map((stat, i) => (
                                 <tr key={i} className={stat.correct ? "row-correct" : "row-wrong"}>
@@ -720,6 +744,7 @@ function App() {
                         </div>
                       </div>
                     </div>
+
                   </div>
                 )}
               </div>
@@ -739,20 +764,26 @@ function App() {
                 <h2 className="section-title" style={{ marginTop: "40px" }}>The Alphabet</h2>
                 <div className="dictionary-grid">
                   {LETTERS.map((l) => (
-                    <div key={l} className="dict-card"><img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} /><p>{l}</p></div>
+                    <div key={l} className="dict-card">
+                      <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
+                      <p>{l}</p>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
 
+            {/* --- SPLIT LAYOUT FOR ACTIVE PRACTICE MODES --- */}
             {!hideCameraTabs.includes(tab) && (
               <div className="practice-layout">
+                
+                {/* LEFT: CAMERA */}
                 <div className="camera-section">
                   <div className="camera-wrapper">
                     <video ref={videoRef} autoPlay playsInline muted />
                     {!isCameraRunning && (
                       <div className="camera-overlay">
-                        <button className="btn primary" onClick={() => setIsCameraRunning(true)}>Enable Camera Feed</button>
+                        <button className="btn primary" onClick={startCamera}>Enable Camera Feed</button>
                       </div>
                     )}
                   </div>
@@ -760,11 +791,14 @@ function App() {
                     <div className="live-status">
                       <span className="status-indicator"></span>
                       Live Translation: <strong>{prediction || "Waiting for sign..."}</strong>
+                      {isRecording && <span className="recording-badge">Recording sequence</span>}
                     </div>
                   )}
                 </div>
 
+                {/* RIGHT: INTERACTIVE PANEL */}
                 <div className="practice-content">
+                  
                   {tab === "predict" && (
                     <div className="view-container">
                       <h2 className="section-title">Practice Mode</h2>
@@ -861,9 +895,11 @@ function App() {
                       </div>
                     </div>
                   )}
+                  
                 </div>
               </div>
             )}
+            
           </div>
         </main>
       </div>
