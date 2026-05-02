@@ -36,7 +36,6 @@ const fetchRandomWord = async () => {
     return wordPool.pop();
   } catch (err) {
     clearTimeout(timeoutId);
-    console.warn("API was too slow or failed. Using 100-word instant fallback.");
     return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
   }
 };
@@ -110,6 +109,12 @@ function App() {
     return { totalAttempts: quizStats.length, accuracy, heatmap, fastest, slowest, weakSpots };
   }, [quizStats]);
 
+  // Frontend State Managers for AI Processing
+  const sequenceBufferRef = useRef([]);
+  const frameCounterRef = useRef(0);
+  const dynamicCooldownRef = useRef(0);
+  const lastStaticSendRef = useRef(0);
+
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
@@ -161,7 +166,6 @@ function App() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // ================= APP LOGIC ROUTER =================
   const handleAppLogic = (currentPred) => {
     const currentTab = tabRef.current;
 
@@ -249,6 +253,10 @@ function App() {
           const currentPred = data.label.trim();
           setPrediction(currentPred);
           handleAppLogicRef.current(currentPred); 
+          
+          // Trigger Cooldown in React to prevent spamming
+          dynamicCooldownRef.current = 60; // Wait ~2 seconds before gathering new data
+          sequenceBufferRef.current = [];  // Clear the sequence buffer
         } else if (data.type === "status") {
           setPrediction(`${data.message}`);
         }
@@ -257,7 +265,7 @@ function App() {
       ws.current.onclose = () => {
         if (isMounted) {
           console.log("🔴 WebSocket Closed. Reconnecting in 2 seconds...");
-          setPrediction("Server Disconnected...");
+          setPrediction("Server Disconnected. Retrying...");
           reconnectTimeout = setTimeout(connect, 2000);
         }
       };
@@ -292,49 +300,60 @@ function App() {
       const currentTab = tabRef.current;
       const mode = (currentTab === "phrases" || currentTab === "sentence") ? "dynamic" : "static";
 
-      // If no hands are detected
-      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-        if (mode === "dynamic") {
-            ws.current.send(JSON.stringify({ mode: "dynamic", hands: [] }));
-        }
-        return;
+      // Package Hands safely into an array of objects
+      let detectedHands = [];
+      if (results.multiHandLandmarks) {
+        detectedHands = results.multiHandLandmarks.map((landmarks, index) => {
+          let label = "Right";
+          const handedness = results.multiHandedness[index];
+          if (handedness && handedness.label) label = handedness.label;
+          
+          const coords = [];
+          landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
+          return { label, landmarks: coords };
+        });
       }
 
-      // Safely package all detected hands
-      const detectedHands = results.multiHandLandmarks.map((landmarks, index) => {
-        let label = "Right";
-        const handedness = results.multiHandedness[index];
-        if (handedness) {
-            if (handedness.label) {
-                label = handedness.label;
-            } else if (handedness.classification && handedness.classification[0]) {
-                label = handedness.classification[0].label;
-            }
+      // --- DYNAMIC MODE (60-Frame Buffered Strategy) ---
+      if (mode === "dynamic") {
+        if (dynamicCooldownRef.current > 0) {
+            dynamicCooldownRef.current -= 1;
+            return; // Don't record frames while cooling down
         }
 
-        const coords = [];
-        landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
+        sequenceBufferRef.current.push(detectedHands);
+        if (sequenceBufferRef.current.length > 60) {
+            sequenceBufferRef.current.shift(); // Keep exactly 60
+        }
 
-        return {
-            label: label,
-            landmarks: coords
-        };
-      });
+        frameCounterRef.current += 1;
 
-      // Send the packaged array to Python
-      ws.current.send(JSON.stringify({
-          mode: mode,
-          hands: detectedHands
-      }));
+        // Fire to backend exactly 3 times a second (every 10 frames) if full
+        if (sequenceBufferRef.current.length === 60 && frameCounterRef.current % 10 === 0) {
+            ws.current.send(JSON.stringify({ 
+                mode: "dynamic", 
+                sequence: sequenceBufferRef.current 
+            }));
+        }
+      } 
+      
+      // --- STATIC MODE (Throttled Strategy) ---
+      else {
+        const now = Date.now();
+        // Only fire if 500ms has passed AND hands are actually present
+        if (now - lastStaticSendRef.current > 500 && detectedHands.length > 0) {
+            ws.current.send(JSON.stringify({ 
+                mode: "static", 
+                hands: detectedHands 
+            }));
+            lastStaticSendRef.current = now;
+        }
+      }
     });
 
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
-        if (
-          videoRef.current && 
-          videoRef.current.readyState >= 2 && 
-          videoRef.current.videoWidth > 0
-        ) {
+        if (videoRef.current && videoRef.current.readyState >= 2 && videoRef.current.videoWidth > 0) {
           try {
             await hands.send({ image: videoRef.current });
           } catch (e) {
@@ -346,9 +365,7 @@ function App() {
       height: 480
     });
 
-    setTimeout(() => {
-      camera.start();
-    }, 100);
+    setTimeout(() => { camera.start(); }, 100);
 
     return () => {
       camera.stop();
