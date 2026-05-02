@@ -2,9 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import tensorflow as tf
-from collections import deque
 import json
-import math
 import sys
 import os
 
@@ -23,40 +21,36 @@ app.add_middleware(
 )
 
 # ================= LOAD MODELS =================
-print("Loading models... Please wait.")
-static_model = tf.keras.models.load_model("../models/landmark_model.keras")
-static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
+print("⏳ Loading models... Please wait.")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
-sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
+static_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/landmark_model.keras"))
+static_labels = np.load(os.path.join(BASE_DIR, "../models/landmark_labels.npy"), allow_pickle=True)
+
+# Note: Ensure this matches the name you saved your phrase model as! 
+sequence_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/sequence_model.keras"))
+sequence_labels = np.load(os.path.join(BASE_DIR, "../models/sequence_labels.npy"), allow_pickle=True)
+
 print("✅ Models loaded successfully!")
-
-# ================= UTILS =================
-def calculate_movement(current_frame, past_frame):
-    """Calculates the distance the wrists have moved between two frames to determine if signing is happening."""
-    if not current_frame or not past_frame:
-        return 0
-    
-    # Wrist coordinates are usually the first 3 values (x,y,z) of the array
-    # We check left hand (indices 0:3) and right hand (indices 63:66)
-    movement = 0
-    for i in [0, 1, 2, 63, 64, 65]: 
-        movement += abs(current_frame[i] - past_frame[i])
-    return movement
-
 
 # ================= WEBSOCKET ENDPOINT =================
 @app.websocket("/ws/predict")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    print("🟢 React Frontend Connected to WebSocket!")
     
-    # Initialize the sliding window (holds exactly 60 frames, pushes old ones out automatically)
-    frame_buffer = deque(maxlen=60)
-    frame_counter = 0
+    # --- Session Variables for Dynamic Mode ---
+    sequence = []
+    prediction_history = []
+    cooldown_frames = 0
+    
+    # Stability Tuning Parameters
+    HISTORY_LENGTH = 10
+    CONFIDENCE_THRESH = 0.85
 
     try:
         while True:
-            # 1. Receive lightweight JSON from React (NO VIDEO FILES!)
+            # 1. Receive lightweight JSON from React
             data = await websocket.receive_text()
             payload = json.loads(data)
             
@@ -82,44 +76,66 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
             # --------------------------------------------------
-            # MODE 2: PHRASES (60-Frame Sliding Window)
+            # MODE 2: PHRASES (Sliding Window & Probability Smoothing)
             # --------------------------------------------------
             elif mode == "dynamic":
-                frame_buffer.append(landmarks)
-                frame_counter += 1
                 
-                # Only run prediction if buffer is full AND we process every 5th frame (saves CPU)
-                if len(frame_buffer) == 60 and frame_counter % 5 == 0:
+                # 1. Update Sliding Window
+                sequence.append(landmarks)
+                sequence = sequence[-60:]
+                
+                # 2. Handle Cooldown
+                if cooldown_frames > 0:
+                    cooldown_frames -= 1
+                    # Let the frontend know we are cooling down so it doesn't wait in silence
+                    await websocket.send_json({
+                        "type": "status",
+                        "message": "Wait..."
+                    })
+                    continue
+                
+                # 3. Prediction Logic (Only if window is full and no cooldown)
+                if len(sequence) == 60 and cooldown_frames == 0:
                     
-                    # ACTION TRIGGER: Are the hands actually moving?
-                    movement_score = calculate_movement(frame_buffer[-1], frame_buffer[-10])
+                    # Convert to batch format for prediction: (1, 60, 126)
+                    sequence_data = np.expand_dims(sequence, axis=0)
+                    res = sequence_model.predict(sequence_data, verbose=0)[0]
                     
-                    # If movement is too low, the user is just resting their hands
-                    if movement_score < 0.05: # You may need to tune this threshold!
-                        await websocket.send_json({
-                            "type": "status",
-                            "message": "Waiting for movement..."
-                        })
-                        continue
+                    # Add to history and calculate the rolling average
+                    prediction_history.append(res)
+                    prediction_history = prediction_history[-HISTORY_LENGTH:]
                     
-                    # Hands are moving! Run the sequence prediction
-                    sequence_data = np.array([list(frame_buffer)])
-                    prediction = sequence_model.predict(sequence_data, verbose=0)
-                    class_index = np.argmax(prediction[0])
-                    confidence = float(prediction[0][class_index])
+                    avg_probs = np.mean(prediction_history, axis=0)
+                    best_class_idx = np.argmax(avg_probs)
+                    best_class_score = avg_probs[best_class_idx]
+                    predicted_word = str(sequence_labels[best_class_idx])
                     
-                    # Only send if confidence is high enough
-                    if confidence > 0.70:
-                        await websocket.send_json({
-                            "type": "prediction",
-                            "label": str(sequence_labels[class_index]),
-                            "confidence": confidence
-                        })
-                        # Clear buffer slightly after a confident prediction to prevent immediate double-guesses
-                        for _ in range(30): 
-                            frame_buffer.popleft() 
+                    # 4. Decision & Output Logic
+                    if best_class_score > CONFIDENCE_THRESH:
+                        # Ignore the neutral class completely
+                        if predicted_word != 'neutral':
+                            
+                            # Send confident prediction to React!
+                            await websocket.send_json({
+                                "type": "prediction",
+                                "label": predicted_word,
+                                "confidence": float(best_class_score)
+                            })
+                            
+                            # Trigger cooldown to prevent word spamming
+                            cooldown_frames = 30
+                            
+                            # Wipe the prediction history clean so the high average
+                            # doesn't accidentally trigger a second prediction
+                            prediction_history.clear()
+                        else:
+                            # If it's neutral, just tell React we are tracking but not signing
+                            await websocket.send_json({
+                                "type": "status",
+                                "message": "Listening..."
+                            })
 
     except WebSocketDisconnect:
-        print("Client disconnected from WebSocket.")
+        print("🛑 Client disconnected from WebSocket.")
     except Exception as e:
-        print(f"WebSocket Error: {e}")
+        print(f"⚠️ WebSocket Error: {e}")
