@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 import numpy as np
@@ -8,6 +8,7 @@ import mediapipe as mp
 import tempfile
 import sys
 import os
+from collections import deque
 
 # Fix imports from root project so we can use the custom normalizer
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -153,3 +154,41 @@ async def predict_sequence(file: UploadFile = File(...)):
         predicted_label = ""
         
     return {"label": predicted_label, "confidence": confidence}
+
+# ================= WEBSOCKET ROUTE FOR REAL-TIME PREDICTIONS =================
+sequence_window = deque(maxlen=60)
+
+@app.websocket("/ws/predict")
+async def websocket_predict(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            mode = payload.get("mode")
+            landmarks = payload.get("landmarks", [])
+            label = ""
+
+            if mode == "static" and len(landmarks) == 63:
+                normalized = normalize_landmarks(landmarks, is_left_hand=False)
+                data = np.array(normalized).reshape(1, -1)
+                preds = static_model.predict(data, verbose=0)
+                label = str(static_labels[np.argmax(preds)])
+                await websocket.send_json({"type": "prediction", "label": label})
+
+            elif mode == "dynamic" and len(landmarks) == 126:
+                sequence_window.append(landmarks)
+                if len(sequence_window) == sequence_window.maxlen:
+                    sequence_data = np.array([list(sequence_window)])
+                    prediction = sequence_model.predict(sequence_data, verbose=0)
+                    class_index = np.argmax(prediction[0])
+                    confidence = float(prediction[0][class_index])
+                    if confidence > 0.7:
+                        label = str(sequence_labels[class_index])
+                    await websocket.send_json({"type": "prediction", "label": label})
+                else:
+                    await websocket.send_json({"type": "status", "message": f"buffering {len(sequence_window)}/{sequence_window.maxlen}"})
+
+            else:
+                await websocket.send_json({"type": "status", "message": "waiting for valid landmarks..."})
+    except WebSocketDisconnect:
+        print("WebSocket client disconnected")
