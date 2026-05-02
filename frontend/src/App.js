@@ -8,7 +8,6 @@ const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "H
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
 
-// EXTREME FALLBACK LIST: 100 pre-defined words
 const FALLBACK_WORDS = [
   "APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", 
   "LIGHT", "MUSIC", "WORLD", "HELLO", "REACT", "PYTHON", "CODING", "HOUSE", "MOUSE", "CHAIR", 
@@ -44,13 +43,12 @@ const fetchRandomWord = async () => {
 
 function App() {
   const videoRef = useRef(null);
-  const ws = useRef(null); // WebSocket Reference
+  const ws = useRef(null); 
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [tab, setTabState] = useState("home");
   const tabRef = useRef("home");
 
-  // --- LOCAL STORAGE: USER AUTH ---
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('signLanguageTutorUser');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -58,7 +56,6 @@ function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
-  // --- LOCAL STORAGE: ANALYTICS ---
   const [quizStats, setQuizStats] = useState(() => {
     const savedStats = localStorage.getItem('signLanguageStats');
     return savedStats ? JSON.parse(savedStats) : [];
@@ -68,7 +65,6 @@ function App() {
     localStorage.setItem('signLanguageStats', JSON.stringify(quizStats));
   }, [quizStats]);
 
-  // --- DASHBOARD ANALYTICS ENGINE ---
   const dashboardData = useMemo(() => {
     if (!quizStats || quizStats.length === 0) return null;
     let totalCorrect = 0;
@@ -114,7 +110,6 @@ function App() {
     return { totalAttempts: quizStats.length, accuracy, heatmap, fastest, slowest, weakSpots };
   }, [quizStats]);
 
-  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
@@ -235,7 +230,6 @@ function App() {
     }
   };
 
-  // We use a ref for handleAppLogic so the WebSocket event listener always has the freshest closure
   const handleAppLogicRef = useRef(handleAppLogic);
   useEffect(() => { handleAppLogicRef.current = handleAppLogic; });
 
@@ -263,12 +257,12 @@ function App() {
       ws.current.onclose = () => {
         if (isMounted) {
           console.log("🔴 WebSocket Closed. Reconnecting in 2 seconds...");
-          reconnectTimeout = setTimeout(connect, 2000); // Auto-reconnect!
+          reconnectTimeout = setTimeout(connect, 2000);
         }
       };
     };
 
-    connect(); // Start the connection
+    connect(); 
 
     return () => {
       isMounted = false;
@@ -297,7 +291,6 @@ function App() {
 
       if (results.multiHandLandmarks) {
         results.multiHandLandmarks.forEach((landmarks, index) => {
-          // MediaPipe mirrors logic, matching Python exactly
           const label = results.multiHandedness[index].label; 
           const coords = [];
           landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
@@ -308,17 +301,23 @@ function App() {
       }
 
       const currentTab = tabRef.current;
-      const mode = (currentTab === "phrases") ? "dynamic" : "static";
+      const mode = (currentTab === "phrases" || currentTab === "sentence") ? "dynamic" : "static";
       
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         if (mode === "dynamic") {
-          // Send 126 coordinates constantly for the Sliding Window (Even if [0,0,0...])
           ws.current.send(JSON.stringify({ mode: "dynamic", landmarks: [...leftHand, ...rightHand] }));
         } else {
-          // For static (Alphabet), we only send 63 coords if hands are actually on screen
-          const activeHand = rightHand.some(v => v !== 0) ? rightHand : leftHand;
-          if (activeHand.some(v => v !== 0)) {
-             ws.current.send(JSON.stringify({ mode: "static", landmarks: activeHand }));
+          const isLeftActive = leftHand.some(v => v !== 0);
+          const isRightActive = rightHand.some(v => v !== 0);
+
+          if (isRightActive || isLeftActive) {
+             const activeHand = isRightActive ? rightHand : leftHand;
+             const isLeftHand = !isRightActive;
+             ws.current.send(JSON.stringify({ 
+                mode: "static", 
+                landmarks: activeHand, 
+                isLeft: isLeftHand 
+             }));
           }
         }
       }
@@ -326,7 +325,6 @@ function App() {
 
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
-        // 🛑 CRITICAL WASM FIX: Only send data if the video feed is fully active
         if (
           videoRef.current && 
           videoRef.current.readyState >= 2 && 
@@ -335,7 +333,6 @@ function App() {
           try {
             await hands.send({ image: videoRef.current });
           } catch (e) {
-            // Silently catch tab-switching DOM exceptions to prevent crashes
             console.warn("MediaPipe Frame Drop:", e);
           }
         }
@@ -344,7 +341,6 @@ function App() {
       height: 480
     });
 
-    // Wrap the start in a tiny timeout to ensure React has painted the video element
     setTimeout(() => {
       camera.start();
     }, 100);
@@ -354,7 +350,6 @@ function App() {
       hands.close();
     };
   }, [isCameraRunning]);
-
 
   const startPhraseMode = () => {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];
@@ -432,7 +427,6 @@ function App() {
     quizStartTimeRef.current = 0;
   };
 
-  // ================= GAME TIMERS =================
   useEffect(() => {
     const timerInterval = setInterval(() => {
       const now = Date.now();
@@ -458,7 +452,6 @@ function App() {
     return () => clearInterval(timerInterval);
   }, [progressQuiz, progressWord, wordComplete]);
 
-  // Keyboard shortcut for space/backspace in sentence mode
   useEffect(() => {
     const handleKey = (e) => {
       if (tabRef.current !== "sentence") return;
@@ -486,7 +479,6 @@ function App() {
 
   return (
     <div className="app-layout">
-      {/* TOP NAVIGATION BAR */}
       <header className="topbar">
         <div className="topbar-left">
           <button className="icon-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
@@ -512,9 +504,7 @@ function App() {
         </div>
       </header>
 
-      {/* MAIN CONTENT AREA WITH SIDEBAR */}
       <div className="main-container">
-        
         <aside className={`sidebar ${isSidebarOpen ? "open" : "closed"}`}>
           <nav className="sidebar-nav">
             <div className="nav-group">
@@ -540,7 +530,6 @@ function App() {
           </nav>
         </aside>
 
-        {/* SCROLLABLE CONTENT AREA */}
         <main className="content-area">
           <div className="content-wrapper">
 
@@ -585,7 +574,6 @@ function App() {
               </div>
             )}
 
-            {/* --- THE BENTO BOX DASHBOARD --- */}
             {tab === "dashboard" && user && (
               <div className="view-container align-left">
                 <div className="dashboard-header">
@@ -711,7 +699,6 @@ function App() {
               </div>
             )}
 
-            {/* --- SPLIT LAYOUT FOR ACTIVE PRACTICE MODES --- */}
             {!hideCameraTabs.includes(tab) && (
               <div className="practice-layout">
                 <div className="camera-section">

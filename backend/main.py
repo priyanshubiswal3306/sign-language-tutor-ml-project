@@ -22,16 +22,13 @@ app.add_middleware(
 
 # ================= LOAD MODELS =================
 print("⏳ Loading models... Please wait.")
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+static_model = tf.keras.models.load_model("../models/landmark_model.keras")
+static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
 
-static_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/landmark_model.keras"))
-static_labels = np.load(os.path.join(BASE_DIR, "../models/landmark_labels.npy"), allow_pickle=True)
-
-# Note: Ensure this matches the name you saved your phrase model as! 
-sequence_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/sequence_model.keras"))
-sequence_labels = np.load(os.path.join(BASE_DIR, "../models/sequence_labels.npy"), allow_pickle=True)
-
+sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
+sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
 print("✅ Models loaded successfully!")
+
 
 # ================= WEBSOCKET ENDPOINT =================
 @app.websocket("/ws/predict")
@@ -39,6 +36,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("🟢 React Frontend Connected to WebSocket!")
     
+    # Session Variables for Sequence Model
     sequence = []
     prediction_history = []
     cooldown_frames = 0
@@ -46,7 +44,6 @@ async def websocket_endpoint(websocket: WebSocket):
     HISTORY_LENGTH = 10
     CONFIDENCE_THRESH = 0.85
 
-    # Notice the try block is now INSIDE the while loop!
     while True:
         try:
             data = await websocket.receive_text()
@@ -54,13 +51,19 @@ async def websocket_endpoint(websocket: WebSocket):
             
             mode = payload.get("mode") 
             landmarks = payload.get("landmarks") 
+            is_left = payload.get("isLeft", False) # Used for static mode
             
             if not landmarks:
                 continue
 
-            # --- STATIC MODE ---
+            # --------------------------------------------------
+            # MODE 1: STATIC (ALPHABET)
+            # --------------------------------------------------
             if mode == "static":
-                input_data = np.array([landmarks])
+                # CRITICAL FIX: Apply your normalizer before predicting!
+                normalized = normalize_landmarks(landmarks, is_left_hand=is_left)
+                input_data = np.array([normalized]).reshape(1, -1)
+                
                 prediction = static_model.predict(input_data, verbose=0)
                 class_index = np.argmax(prediction[0])
                 confidence = float(prediction[0][class_index])
@@ -71,9 +74,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     "confidence": confidence
                 })
 
-            # --- DYNAMIC MODE ---
+            # --------------------------------------------------
+            # MODE 2: DYNAMIC (PHRASES)
+            # --------------------------------------------------
             elif mode == "dynamic":
-                sequence.append(landmarks)
+                # Split the 126 coordinates back into left and right hands
+                left_raw = landmarks[:63]
+                right_raw = landmarks[63:]
+                
+                # CRITICAL FIX: Apply normalizer to each hand, or pad with zeros if hand is missing
+                left_norm = normalize_landmarks(left_raw, is_left_hand=True) if sum(left_raw) != 0 else [0.0] * 63
+                right_norm = normalize_landmarks(right_raw, is_left_hand=False) if sum(right_raw) != 0 else [0.0] * 63
+                
+                row = left_norm + right_norm
+                sequence.append(row)
                 sequence = sequence[-60:]
                 
                 if cooldown_frames > 0:
@@ -107,7 +121,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         except WebSocketDisconnect:
             print("🛑 Client disconnected from WebSocket.")
-            break # Exit the loop if the browser closes
+            break
         except Exception as e:
-            # THIS IS THE MAGIC FIX: If TF throws an error, print it, but keep listening!
+            # Prevents the connection from dying if one frame causes a math error
             print(f"⚠️ Frame Error (Ignoring): {e}")
