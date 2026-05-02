@@ -6,7 +6,6 @@ const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "H
 const MAX_Q = 30;
 const DOUBLE_LETTER_COOLDOWN = 3000; 
 
-// EXTREME FALLBACK LIST: 100 pre-defined words
 const FALLBACK_WORDS = [
   "APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", 
   "LIGHT", "MUSIC", "WORLD", "HELLO", "REACT", "PYTHON", "CODING", "HOUSE", "MOUSE", "CHAIR", 
@@ -20,40 +19,25 @@ const FALLBACK_WORDS = [
   "SCHOOL", "CLASS", "GRADE", "STUDY", "LEARN", "TEACH", "THINK", "SOLVE", "BUILD", "CREATE"
 ];
 
-// Local array to hold a batch of API words
 let wordPool = [];
 
 const fetchRandomWord = async () => {
-  // 1. If we have words waiting in the pool, return one INSTANTLY
   if (wordPool.length > 0) {
     return wordPool.pop();
   }
-
-  // 2. Set up a strict 5-second timeout
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
   try {
-    // 3. Request a batch of 20 words, passing in our abort controller
     const res = await fetch(`https://random-word-api.herokuapp.com/word?number=20`, {
       signal: controller.signal
     });
-    
-    // Clear the timeout if the server answers quickly
     clearTimeout(timeoutId);
-
     if (!res.ok) throw new Error("API Network error");
-    
     const data = await res.json();
-    
-    // Save all the words to our local pool in uppercase
     wordPool = data.map(w => w.toUpperCase());
-    
-    // Return the first one for the immediate game
     return wordPool.pop();
-
   } catch (err) {
-    // If it takes more than 5s, or API breaks, drop down to the 100 local words
     clearTimeout(timeoutId);
     console.warn("API was too slow or failed. Using 100-word instant fallback.");
     return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
@@ -66,11 +50,9 @@ function App() {
   const recordedChunksRef = useRef([]); 
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-
   const [tab, setTabState] = useState("home");
   const tabRef = useRef("home");
 
-  // --- LOCAL STORAGE: USER AUTH ---
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('signLanguageTutorUser');
     return savedUser ? JSON.parse(savedUser) : null;
@@ -78,7 +60,6 @@ function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
-  // --- LOCAL STORAGE: ANALYTICS ---
   const [quizStats, setQuizStats] = useState(() => {
     const savedStats = localStorage.getItem('signLanguageStats');
     return savedStats ? JSON.parse(savedStats) : [];
@@ -88,7 +69,6 @@ function App() {
     localStorage.setItem('signLanguageStats', JSON.stringify(quizStats));
   }, [quizStats]);
 
-  // --- DASHBOARD ANALYTICS ENGINE ---
   const dashboardData = useMemo(() => {
     if (!quizStats || quizStats.length === 0) return null;
 
@@ -108,8 +88,6 @@ function App() {
     });
 
     const accuracy = Math.round((totalCorrect / quizStats.length) * 100);
-
-    // Heatmap & Leaderboard Data
     const heatmap = [];
     let validTimes = [];
 
@@ -131,21 +109,14 @@ function App() {
       }
     });
 
-    // Fastest & Slowest (Requires at least 1 correct attempt)
     validTimes.sort((a, b) => a.avgTime - b.avgTime);
     const fastest = validTimes.slice(0, 3);
     const slowest = [...validTimes].reverse().slice(0, 3);
-
-    // Weak Spots (Low accuracy)
-    const weakSpots = heatmap
-      .filter(h => h.attempts > 0 && h.acc < 0.7)
-      .sort((a, b) => a.acc - b.acc)
-      .slice(0, 3);
+    const weakSpots = heatmap.filter(h => h.attempts > 0 && h.acc < 0.7).sort((a, b) => a.acc - b.acc).slice(0, 3);
 
     return { totalAttempts: quizStats.length, accuracy, heatmap, fastest, slowest, weakSpots };
   }, [quizStats]);
 
-  // Shared Logic Refs
   const stableCharRef = useRef("");
   const stableCountRef = useRef(0);
   const lastAddedRef = useRef("");
@@ -492,7 +463,6 @@ function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, []);
 
-
   const handleLogout = () => {
     setUser(null); 
     setTab("home");
@@ -504,7 +474,6 @@ function App() {
   return (
     <div className="app-layout">
       
-      {/* TOP NAVIGATION BAR */}
       <header className="topbar">
         <div className="topbar-left">
           <button className="icon-btn" onClick={() => setIsSidebarOpen(!isSidebarOpen)}>
@@ -530,10 +499,8 @@ function App() {
         </div>
       </header>
 
-      {/* MAIN CONTENT AREA WITH SIDEBAR */}
       <div className="main-container">
         
-        {/* COLLAPSIBLE LEFT SIDEBAR */}
         <aside className={`sidebar ${isSidebarOpen ? "open" : "closed"}`}>
           <nav className="sidebar-nav">
             <div className="nav-group">
@@ -559,11 +526,9 @@ function App() {
           </nav>
         </aside>
 
-        {/* SCROLLABLE CONTENT AREA */}
         <main className="content-area">
           <div className="content-wrapper">
 
-            {/* STATIC VIEWS */}
             {tab === "home" && (
               <div className="view-container center-text">
                 <h1 className="hero-title">Master Sign Language with AI</h1>
@@ -587,42 +552,24 @@ function App() {
                   
                   <div className="form-group">
                     <label>Email Address</label>
-                    <input 
-                      type="email" 
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      placeholder="name@example.com"
-                    />
+                    <input type="email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} placeholder="name@example.com"/>
                   </div>
                   <div className="form-group">
                     <label>Password (Demo: Any)</label>
-                    <input 
-                      type="password" 
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      placeholder="••••••••"
-                    />
+                    <input type="password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} placeholder="••••••••"/>
                   </div>
-                  <button 
-                    className="btn primary full-width" 
-                    onClick={() => {
+                  <button className="btn primary full-width" onClick={() => {
                       if(loginEmail.includes("@")) {
                         const newUser = { email: loginEmail, name: loginEmail.split("@")[0] };
                         setUser(newUser);
                         setTab("dashboard");
                         localStorage.setItem('signLanguageTutorUser', JSON.stringify(newUser));
-                      } else {
-                        alert("Please enter a valid email to test the login.");
-                      }
-                    }}
-                  >
-                    Continue
-                  </button>
+                      } else { alert("Please enter a valid email to test the login."); }
+                    }}>Continue</button>
                 </div>
               </div>
             )}
 
-            {/* --- THE BENTO BOX DASHBOARD --- */}
             {tab === "dashboard" && user && (
               <div className="view-container align-left">
                 <div className="dashboard-header">
@@ -641,7 +588,6 @@ function App() {
                 ) : (
                   <div className="bento-layout">
                     
-                    {/* Row 1: High Level Stats */}
                     <div className="bento-row">
                       <div className="bento-card stat-card">
                         <span className="bento-label">Questions Answered</span>
@@ -662,7 +608,6 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Row 2: Heatmap & Weak Spots */}
                     <div className="bento-row split-2-1">
                       <div className="bento-card">
                         <h3 className="bento-title">Alphabet Heatmap</h3>
@@ -695,7 +640,6 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Row 3: Leaderboards */}
                     <div className="bento-row split-half">
                       <div className="bento-card">
                         <h3 className="bento-title">⚡ Fastest Signs</h3>
@@ -724,7 +668,6 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Row 4: Recent History */}
                     <div className="bento-row">
                       <div className="bento-card full-width">
                         <h3 className="bento-title">Recent Activity Log</h3>
@@ -773,11 +716,9 @@ function App() {
               </div>
             )}
 
-            {/* --- SPLIT LAYOUT FOR ACTIVE PRACTICE MODES --- */}
             {!hideCameraTabs.includes(tab) && (
               <div className="practice-layout">
                 
-                {/* LEFT: CAMERA */}
                 <div className="camera-section">
                   <div className="camera-wrapper">
                     <video ref={videoRef} autoPlay playsInline muted />
@@ -796,7 +737,6 @@ function App() {
                   )}
                 </div>
 
-                {/* RIGHT: INTERACTIVE PANEL */}
                 <div className="practice-content">
                   
                   {tab === "predict" && (

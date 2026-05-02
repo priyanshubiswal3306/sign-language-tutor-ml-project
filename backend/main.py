@@ -25,12 +25,14 @@ app.add_middleware(
 )
 
 # ================= LOAD MODELS =================
-print("Loading models... Please wait.")
-static_model = tf.keras.models.load_model("../models/landmark_model.keras")
-static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
+print("⏳ Loading models... Please wait.")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
-sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
+static_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/landmark_model.keras"))
+static_labels = np.load(os.path.join(BASE_DIR, "../models/landmark_labels.npy"), allow_pickle=True)
+
+sequence_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/sequence_model.keras"))
+sequence_labels = np.load(os.path.join(BASE_DIR, "../models/sequence_labels.npy"), allow_pickle=True)
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
@@ -103,7 +105,6 @@ async def predict_sequence(file: UploadFile = File(...)):
                 for lm in hand_landmarks.landmark:
                     raw_coords.extend([lm.x, lm.y, lm.z])
                 
-                # CRITICAL FIX: Apply normalizer before appending to sequence
                 normalized = normalize_landmarks(raw_coords, is_left_hand=is_left)
                 row.extend(normalized)
                 
