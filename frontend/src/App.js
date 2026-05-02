@@ -241,22 +241,38 @@ function App() {
 
   // ================= WEBSOCKET CONNECTION =================
   useEffect(() => {
-    ws.current = new WebSocket("ws://127.0.0.1:8000/ws/predict");
+    let isMounted = true;
+    let reconnectTimeout;
 
-    ws.current.onopen = () => console.log("Connected to AI Backend");
-    
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === "prediction") {
-        const currentPred = data.label.trim();
-        setPrediction(currentPred);
-        handleAppLogicRef.current(currentPred); // Pass to our logic router
-      } else if (data.type === "status") {
-        setPrediction(`(${data.message})`);
-      }
+    const connect = () => {
+      ws.current = new WebSocket("ws://127.0.0.1:8000/ws/predict");
+
+      ws.current.onopen = () => console.log("🟢 Connected to AI Backend");
+      
+      ws.current.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === "prediction") {
+          const currentPred = data.label.trim();
+          setPrediction(currentPred);
+          handleAppLogicRef.current(currentPred); 
+        } else if (data.type === "status") {
+          setPrediction(`(${data.message})`);
+        }
+      };
+
+      ws.current.onclose = () => {
+        if (isMounted) {
+          console.log("🔴 WebSocket Closed. Reconnecting in 2 seconds...");
+          reconnectTimeout = setTimeout(connect, 2000); // Auto-reconnect!
+        }
+      };
     };
 
+    connect(); // Start the connection
+
     return () => {
+      isMounted = false;
+      clearTimeout(reconnectTimeout);
       if (ws.current) ws.current.close();
     };
   }, []);
