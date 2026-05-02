@@ -6,7 +6,26 @@ import "./App.css";
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const PHRASES = ["Thank you", "Welcome", "Yes", "No", "Help", "Sorry", "Eat", "Hello", "Bye", "Stop"];
 const MAX_Q = 30;
-const DOUBLE_LETTER_COOLDOWN = 3000; 
+const DOUBLE_LETTER_COOLDOWN = 3000;
+
+// Maps model output labels (e.g. "thank_you") → display strings (e.g. "Thank you").
+// Extend this object whenever you add new phrases to your sequence model.
+const PHRASE_LABEL_MAP = {
+  "thank_you": "Thank you",
+  "welcome":   "Welcome",
+  "yes":       "Yes",
+  "no":        "No",
+  "help":      "Help",
+  "sorry":     "Sorry",
+  "eat":       "Eat",
+  "hello":     "Hello",
+  "bye":       "Bye",
+  "stop":      "Stop",
+};
+
+// Convert a raw sequence-model label to its human-readable display string.
+const normalizeLabel = (raw) =>
+  PHRASE_LABEL_MAP[raw] ?? PHRASE_LABEL_MAP[raw.toLowerCase()] ?? raw;
 
 const FALLBACK_WORDS = [
   "APPLE", "WATER", "SMILE", "HAPPY", "GREEN", "PLANT", "TIGER", "RIVER", "CLOUD", "BRAIN", 
@@ -223,6 +242,8 @@ function App() {
     }
 
     if (currentTab === "phrases" && phraseActiveRef.current) {
+      // BUG FIX: start the clock when the first hand is detected,
+      // so the 10-second timeout in the interval can actually fire.
       if (!phraseHandDetectedRef.current) {
         phraseHandDetectedRef.current = true;
         phraseStartTimeRef.current = Date.now();
@@ -250,13 +271,15 @@ function App() {
       ws.current.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data.type === "prediction") {
-          const currentPred = data.label.trim();
+          // Normalise model labels (e.g. "thank_you") to display strings ("Thank you")
+          // so every downstream consumer (quiz, phrase drills, sentence) sees the same format.
+          const currentPred = normalizeLabel(data.label.trim());
           setPrediction(currentPred);
-          handleAppLogicRef.current(currentPred); 
-          
-          // Trigger Cooldown in React to prevent spamming
-          dynamicCooldownRef.current = 60; // Wait ~2 seconds before gathering new data
-          sequenceBufferRef.current = [];  // Clear the sequence buffer
+          handleAppLogicRef.current(currentPred);
+
+          // Trigger cooldown to prevent spamming after a dynamic prediction
+          dynamicCooldownRef.current = 60;
+          sequenceBufferRef.current = [];
         } else if (data.type === "status") {
           setPrediction(`${data.message}`);
         }
