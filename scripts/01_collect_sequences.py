@@ -31,6 +31,12 @@ for sequence in range(dirmax + 1, dirmax + 1 + no_sequences):
     print(f"Waiting to record sequence {sequence}... Press SPACE to start, or 'Q' to quit.")
     while True:
         ret, frame = cap.read()
+        
+        # SAFETY NET: Ignore dropped/empty frames from the webcam
+        if not ret or frame is None:
+            cv2.waitKey(10)
+            continue
+            
         frame = cv2.flip(frame, 1)
         
         cv2.putText(frame, f'Ready for Video {sequence}', (120,200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255, 0), 4, cv2.LINE_AA)
@@ -53,14 +59,22 @@ for sequence in range(dirmax + 1, dirmax + 1 + no_sequences):
     last_known_left = [0.0] * 63
     last_known_right = [0.0] * 63
 
-    for frame_num in range(SEQUENCE_LENGTH):
+    frame_num = 0
+    # Use a while loop instead of a for loop so we don't count dropped frames
+    while frame_num < SEQUENCE_LENGTH:
         ret, frame = cap.read()
+        
+        # SAFETY NET: Ignore dropped/empty frames during recording
+        if not ret or frame is None:
+            cv2.waitKey(10)
+            continue
+            
         frame = cv2.flip(frame, 1)
 
         image, results = frame, hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         
         # UI Feedback during recording
-        cv2.putText(image, f'RECORDING VIDEO {sequence} | Frame {frame_num}/{SEQUENCE_LENGTH}', (15,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+        cv2.putText(image, f'RECORDING VIDEO {sequence} | Frame {frame_num+1}/{SEQUENCE_LENGTH}', (15,30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
 
         # Extraction and Forward-Fill Logic
         if results.multi_hand_landmarks:
@@ -86,6 +100,8 @@ for sequence in range(dirmax + 1, dirmax + 1 + no_sequences):
         if cv2.waitKey(10) & 0xFF == ord('q'):
             quit_collection = True
             break
+            
+        frame_num += 1 # Only increase the counter if a valid frame was processed
 
     if quit_collection:
         print("\n🛑 Recording interrupted mid-video. Partial data discarded.")
