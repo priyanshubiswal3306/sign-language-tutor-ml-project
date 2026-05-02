@@ -310,13 +310,28 @@ function App() {
 
     const camera = new Camera(videoRef.current, {
       onFrame: async () => {
-        await hands.send({ image: videoRef.current });
+        // 🛑 CRITICAL WASM FIX: Only send data if the video feed is fully active
+        if (
+          videoRef.current && 
+          videoRef.current.readyState >= 2 && 
+          videoRef.current.videoWidth > 0
+        ) {
+          try {
+            await hands.send({ image: videoRef.current });
+          } catch (e) {
+            // Silently catch tab-switching DOM exceptions to prevent crashes
+            console.warn("MediaPipe Frame Drop:", e);
+          }
+        }
       },
       width: 640,
       height: 480
     });
 
-    camera.start();
+    // Wrap the start in a tiny timeout to ensure React has painted the video element
+    setTimeout(() => {
+      camera.start();
+    }, 100);
 
     return () => {
       camera.stop();
