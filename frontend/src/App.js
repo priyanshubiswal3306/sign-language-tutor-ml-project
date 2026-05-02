@@ -250,13 +250,14 @@ function App() {
           setPrediction(currentPred);
           handleAppLogicRef.current(currentPred); 
         } else if (data.type === "status") {
-          setPrediction(`(${data.message})`);
+          setPrediction(`${data.message}`);
         }
       };
 
       ws.current.onclose = () => {
         if (isMounted) {
           console.log("🔴 WebSocket Closed. Reconnecting in 2 seconds...");
+          setPrediction("Server Disconnected...");
           reconnectTimeout = setTimeout(connect, 2000);
         }
       };
@@ -286,41 +287,45 @@ function App() {
     });
 
     hands.onResults((results) => {
-      let leftHand = new Array(63).fill(0.0);
-      let rightHand = new Array(63).fill(0.0);
-
-      if (results.multiHandLandmarks) {
-        results.multiHandLandmarks.forEach((landmarks, index) => {
-          const label = results.multiHandedness[index].label; 
-          const coords = [];
-          landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
-          
-          if (label === 'Right') leftHand = coords;
-          else rightHand = coords;
-        });
-      }
+      if (!ws.current || ws.current.readyState !== WebSocket.OPEN) return;
 
       const currentTab = tabRef.current;
       const mode = (currentTab === "phrases" || currentTab === "sentence") ? "dynamic" : "static";
-      
-      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-        if (mode === "dynamic") {
-          ws.current.send(JSON.stringify({ mode: "dynamic", landmarks: [...leftHand, ...rightHand] }));
-        } else {
-          const isLeftActive = leftHand.some(v => v !== 0);
-          const isRightActive = rightHand.some(v => v !== 0);
 
-          if (isRightActive || isLeftActive) {
-             const activeHand = isRightActive ? rightHand : leftHand;
-             const isLeftHand = !isRightActive;
-             ws.current.send(JSON.stringify({ 
-                mode: "static", 
-                landmarks: activeHand, 
-                isLeft: isLeftHand 
-             }));
-          }
+      // If no hands are detected
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        if (mode === "dynamic") {
+            ws.current.send(JSON.stringify({ mode: "dynamic", hands: [] }));
         }
+        return;
       }
+
+      // Safely package all detected hands
+      const detectedHands = results.multiHandLandmarks.map((landmarks, index) => {
+        let label = "Right";
+        const handedness = results.multiHandedness[index];
+        if (handedness) {
+            if (handedness.label) {
+                label = handedness.label;
+            } else if (handedness.classification && handedness.classification[0]) {
+                label = handedness.classification[0].label;
+            }
+        }
+
+        const coords = [];
+        landmarks.forEach(lm => { coords.push(lm.x, lm.y, lm.z); });
+
+        return {
+            label: label,
+            landmarks: coords
+        };
+      });
+
+      // Send the packaged array to Python
+      ws.current.send(JSON.stringify({
+          mode: mode,
+          hands: detectedHands
+      }));
     });
 
     const camera = new Camera(videoRef.current, {
@@ -350,6 +355,7 @@ function App() {
       hands.close();
     };
   }, [isCameraRunning]);
+
 
   const startPhraseMode = () => {
     const randomPhrase = PHRASES[Math.floor(Math.random() * PHRASES.length)];

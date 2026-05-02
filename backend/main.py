@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import tensorflow as tf
+import traceback
 import json
 import sys
 import os
@@ -22,13 +23,15 @@ app.add_middleware(
 
 # ================= LOAD MODELS =================
 print("⏳ Loading models... Please wait.")
-static_model = tf.keras.models.load_model("../models/landmark_model.keras")
-static_labels = np.load("../models/landmark_labels.npy", allow_pickle=True)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-sequence_model = tf.keras.models.load_model("../models/sequence_model.keras")
-sequence_labels = np.load("../models/sequence_labels.npy", allow_pickle=True)
+static_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/landmark_model.keras"))
+static_labels = np.load(os.path.join(BASE_DIR, "../models/landmark_labels.npy"), allow_pickle=True)
+
+sequence_model = tf.keras.models.load_model(os.path.join(BASE_DIR, "../models/sequence_model.keras"))
+sequence_labels = np.load(os.path.join(BASE_DIR, "../models/sequence_labels.npy"), allow_pickle=True)
+
 print("✅ Models loaded successfully!")
-
 
 # ================= WEBSOCKET ENDPOINT =================
 @app.websocket("/ws/predict")
@@ -36,7 +39,7 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     print("🟢 React Frontend Connected to WebSocket!")
     
-    # Session Variables for Sequence Model
+    # Session Variables
     sequence = []
     prediction_history = []
     cooldown_frames = 0
@@ -50,19 +53,21 @@ async def websocket_endpoint(websocket: WebSocket):
             payload = json.loads(data)
             
             mode = payload.get("mode") 
-            landmarks = payload.get("landmarks") 
-            is_left = payload.get("isLeft", False) # Used for static mode
+            hands_data = payload.get("hands", []) # Now an array of hand objects
             
-            if not landmarks:
-                continue
-
             # --------------------------------------------------
             # MODE 1: STATIC (ALPHABET)
             # --------------------------------------------------
             if mode == "static":
-                # CRITICAL FIX: Apply your normalizer before predicting!
-                normalized = normalize_landmarks(landmarks, is_left_hand=is_left)
-                input_data = np.array([normalized]).reshape(1, -1)
+                if not hands_data:
+                    continue
+                
+                # Take the dominant/first hand detected
+                hand = hands_data[0]
+                is_left = (hand["label"] == "Left")
+                
+                normalized = normalize_landmarks(hand["landmarks"], is_left_hand=is_left)
+                input_data = np.array(normalized).reshape(1, -1)
                 
                 prediction = static_model.predict(input_data, verbose=0)
                 class_index = np.argmax(prediction[0])
@@ -78,15 +83,24 @@ async def websocket_endpoint(websocket: WebSocket):
             # MODE 2: DYNAMIC (PHRASES)
             # --------------------------------------------------
             elif mode == "dynamic":
-                # Split the 126 coordinates back into left and right hands
-                left_raw = landmarks[:63]
-                right_raw = landmarks[63:]
+                row = []
                 
-                # CRITICAL FIX: Apply normalizer to each hand, or pad with zeros if hand is missing
-                left_norm = normalize_landmarks(left_raw, is_left_hand=True) if sum(left_raw) != 0 else [0.0] * 63
-                right_norm = normalize_landmarks(right_raw, is_left_hand=False) if sum(right_raw) != 0 else [0.0] * 63
-                
-                row = left_norm + right_norm
+                if hands_data:
+                    # Sort hands by X coordinate exactly like the original training script
+                    sorted_hands = sorted(hands_data, key=lambda h: h["landmarks"][0])
+                    
+                    for hand in sorted_hands[:2]:
+                        is_left = (hand["label"] == "Left")
+                        normalized = normalize_landmarks(hand["landmarks"], is_left_hand=is_left)
+                        row.extend(normalized)
+                        
+                    # Pad to 126 exactly like the original training script
+                    if len(sorted_hands) == 1:
+                        row.extend([0.0] * 63)
+                else:
+                    # No hands detected
+                    row = [0.0] * 126
+                    
                 sequence.append(row)
                 sequence = sequence[-60:]
                 
@@ -118,10 +132,16 @@ async def websocket_endpoint(websocket: WebSocket):
                             prediction_history.clear()
                         else:
                             await websocket.send_json({"type": "status", "message": "Listening..."})
+                    else:
+                        # Feed back the confidence so you know it's working!
+                        await websocket.send_json({
+                            "type": "status", 
+                            "message": f"Thinking... ({best_class_score*100:.0f}%)"
+                        })
 
         except WebSocketDisconnect:
             print("🛑 Client disconnected from WebSocket.")
             break
         except Exception as e:
-            # Prevents the connection from dying if one frame causes a math error
             print(f"⚠️ Frame Error (Ignoring): {e}")
+            traceback.print_exc() # Prints the exact math error to terminal if it happens
