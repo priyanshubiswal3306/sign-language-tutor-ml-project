@@ -2,128 +2,98 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import os
-import sys
-import uuid
-import time
 
-# Fix paths to import your custom normalizer
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, "..")))
-
-from src.utils.landmark_normalizer import normalize_landmarks
-
-# Paths & Config
-DATASET_PATH = os.path.join(BASE_DIR, "..", "data", "sequence_dataset")
-SEQ_LENGTH = 60 # 60 frames (~2 seconds)
-RECORD_DURATION = 2.0 # 2 seconds target
-
-# Init MediaPipe
+# ================= SETUP =================
 mp_hands = mp.solutions.hands
-mp_drawing = mp.solutions.drawing_utils
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
+# max_num_hands MUST be 2 for phrases!
+hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5)
+mp_draw = mp.solutions.drawing_utils
 
-def collect_data():
-    action = input("Enter the phrase you are recording (e.g., 'Thank you', 'Hello'): ").strip()
-    if not action:
-        print("Action cannot be empty!")
-        return
+DATA_PATH = os.path.join('data', 'phrase_sequences')
+SEQUENCE_LENGTH = 60 # Number of frames per video
 
-    save_dir = os.path.join(DATASET_PATH, action)
-    os.makedirs(save_dir, exist_ok=True)
+# ================= GET INPUT =================
+action = input("Enter the phrase you are recording (e.g., 'hello', 'thank_you'): ").lower()
+no_sequences = int(input("How many videos do you want to record? (e.g., 20): "))
+
+# Create folder for this phrase
+action_path = os.path.join(DATA_PATH, action)
+os.makedirs(action_path, exist_ok=True)
+
+# Find the next available folder number so we don't overwrite old data
+dirmax = np.max([int(d) for d in os.listdir(action_path)]) if os.listdir(action_path) else 0
+
+cap = cv2.VideoCapture(0)
+
+print(f"\n🎥 GET READY! Recording {no_sequences} videos for '{action}'.")
+print("Press SPACE to start the sequence collection...\n")
+
+# Wait for user to press space before starting
+while True:
+    ret, frame = cap.read()
+    cv2.putText(frame, 'Press SPACE to start', (120,200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255, 0), 4, cv2.LINE_AA)
+    cv2.imshow('OpenCV Feed', frame)
+    if cv2.waitKey(10) & 0xFF == ord(' '):
+        break
+
+# ================= RECORDING LOOP =================
+for sequence in range(dirmax + 1, dirmax + 1 + no_sequences):
     
-    existing_files = len(os.listdir(save_dir))
-    print(f"\n✅ Ready to record '{action}'. You currently have {existing_files} sequences.")
-    print("👉 Click the video window, then press SPACEBAR or 'r' to record.")
-    print("👉 Press 'q' or ESC to quit.\n")
+    sequence_data = []
+    
+    # 🧠 THE FORWARD-FILL MEMORY VARIABLES
+    # If a hand isn't detected in frame 1, it starts at 0.0
+    last_known_left = [0.0] * 63
+    last_known_right = [0.0] * 63
 
-    cap = cv2.VideoCapture(0)
-
-    while True:
+    for frame_num in range(SEQUENCE_LENGTH):
         ret, frame = cap.read()
-        if not ret: break
+        frame = cv2.flip(frame, 1) # Mirror image
 
-        frame = cv2.flip(frame, 1)
-        display_frame = frame.copy()
+        # Convert to RGB for MediaPipe
+        image, results = frame, hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         
-        # Display instructions
-        cv2.putText(display_frame, f"Recording: {action}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        cv2.putText(display_frame, f"Count: {len(os.listdir(save_dir))}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-        cv2.putText(display_frame, "Press SPACE or 'r' to Record", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(display_frame, "Press ESC or 'q' to Quit", (10, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        # Draw text so you know what is happening
+        if frame_num == 0: 
+            cv2.putText(image, 'STARTING COLLECTION...', (120,200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255, 0), 4, cv2.LINE_AA)
+            cv2.putText(image, f'Collecting video {sequence}', (15,12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
+            cv2.imshow('OpenCV Feed', image)
+            cv2.waitKey(2000) # 2 second pause between videos so you can reset your hands
+        else: 
+            cv2.putText(image, f'Collecting video {sequence} | Frame {frame_num}/60', (15,12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
 
-        cv2.imshow("Sequence Collector", display_frame)
+        # --------------------------------------------------
+        # THE MAGIC LOGIC: Extract and Forward-Fill
+        # --------------------------------------------------
+        if results.multi_hand_landmarks:
+            for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+                mp_draw.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                
+                # Extract the 63 coordinates
+                coords = []
+                for lm in hand_landmarks.landmark:
+                    coords.extend([lm.x, lm.y, lm.z])
+                
+                # Check which hand it is and update our memory!
+                # Note: MediaPipe handedness is flipped when using cv2.flip
+                label = handedness.classification[0].label 
+                if label == 'Right': # This is actually the Left hand on screen
+                    last_known_left = coords
+                else: # This is actually the Right hand on screen
+                    last_known_right = coords
 
-        key = cv2.waitKey(1) & 0xFF
+        # Combine them into our 126-feature array
+        # If MediaPipe missed a hand this frame, it just uses the last_known coordinates!
+        final_row = np.concatenate([last_known_left, last_known_right])
+        sequence_data.append(final_row)
         
-        # Quit if 'q', 'Q', or ESC (key 27) is pressed
-        if key == ord('q') or key == ord('Q') or key == 27:
-            print("Exiting collector...")
-            break
-            
-        elif key == 32 or key == ord('r') or key == ord('R'): # SPACEBAR or 'r'/'R' pressed
-            # Visual Warning before recording starts
-            for i in range(3, 0, -1):
-                warn_frame = frame.copy()
-                cv2.putText(warn_frame, f"Get Ready... {i}", (150, 250), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 165, 255), 4)
-                cv2.imshow("Sequence Collector", warn_frame)
-                cv2.waitKey(500) 
+        cv2.imshow('OpenCV Feed', image)
+        cv2.waitKey(10)
 
-            sequence_data = []
-            start_time = time.time()
-            
-            # Record exactly SEQ_LENGTH frames
-            for frame_num in range(SEQ_LENGTH):
-                ret, frame = cap.read()
-                frame = cv2.flip(frame, 1)
-                
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = hands.process(rgb)
+    # Save this 60-frame video as a numpy array file (.npy is much faster than CSV for sequences)
+    npy_path = os.path.join(action_path, str(sequence))
+    np.save(npy_path, sequence_data)
 
-                if results.multi_hand_landmarks:
-                    for hl in results.multi_hand_landmarks:
-                        mp_drawing.draw_landmarks(frame, hl, mp_hands.HAND_CONNECTIONS)
-
-                # Calculate remaining time
-                elapsed_time = time.time() - start_time
-                time_left = max(0.0, RECORD_DURATION - elapsed_time)
-
-                # Display the timer and frame count
-                cv2.putText(frame, f"🔴 RECORDING: {time_left:.1f}s left", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
-                cv2.putText(frame, f"Frame {frame_num+1}/{SEQ_LENGTH}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                
-                cv2.imshow("Sequence Collector", frame)
-                cv2.waitKey(10) 
-
-                row = []
-                if results.multi_hand_landmarks:
-                    hands_detected = list(zip(results.multi_hand_landmarks, results.multi_handedness))
-                    hands_detected = sorted(hands_detected, key=lambda h: h[0].landmark[0].x)
-                    
-                    for hand_landmarks, hand_info in hands_detected[:2]:
-                        is_left = (hand_info.classification[0].label == "Left")
-                        
-                        raw_coords = []
-                        for lm in hand_landmarks.landmark:
-                            raw_coords.extend([lm.x, lm.y, lm.z])
-                            
-                        # Apply custom normalizer
-                        normalized = normalize_landmarks(raw_coords, is_left_hand=is_left)
-                        row.extend(normalized)
-                        
-                    if len(hands_detected) == 1:
-                        row.extend([0.0] * 63)
-                else:
-                    row = [0.0] * 126
-                
-                sequence_data.append(row)
-
-            if len(sequence_data) == SEQ_LENGTH:
-                save_path = os.path.join(save_dir, f"{uuid.uuid4().hex}.npy")
-                np.save(save_path, np.array(sequence_data))
-                print(f"Saved sequence! Total: {len(os.listdir(save_dir))}")
-
-    cap.release()
-    cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    collect_data()
+cap.release()
+cv2.destroyAllWindows()
+print("\n✅ Collection Complete!")
