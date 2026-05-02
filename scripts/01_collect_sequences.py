@@ -8,7 +8,8 @@ mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(max_num_hands=2, min_detection_confidence=0.5, min_tracking_confidence=0.5)
 mp_draw = mp.solutions.drawing_utils
 
-DATA_PATH = os.path.join('data', 'phrase_sequences')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH = os.path.join(BASE_DIR, '..', 'data', 'sequence_dataset')
 SEQUENCE_LENGTH = 60 # Number of frames per video
 
 # ================= GET INPUT =================
@@ -17,7 +18,7 @@ no_sequences = int(input("How many videos do you want to record? (e.g., 20): "))
 
 action_path = os.path.join(DATA_PATH, action)
 os.makedirs(action_path, exist_ok=True)
-dirmax = np.max([int(d) for d in os.listdir(action_path)]) if os.listdir(action_path) else 0
+dirmax = np.max([int(d[:-4]) for d in os.listdir(action_path) if d.endswith('.npy') and d[:-4].isdigit()]) if any(d.endswith('.npy') and d[:-4].isdigit() for d in os.listdir(action_path)) else 0
 
 cap = cv2.VideoCapture(0)
 print(f"\n🎥 GET READY! Recording {no_sequences} videos for '{action}'.")
