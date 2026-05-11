@@ -695,20 +695,16 @@ function App() {
 
             {tab === "guide" && (
               <div className="view-container align-left">
-                <h2 className="section-title">Common Phrases</h2>
-                <div className="dictionary-grid">
-                  {PHRASES.map((p) => (
-                    <div key={p} className="dict-card">
-                      <img src={`/data/guide_images/${p.replace(/ /g, "_")}.png`} alt={`Sign ${p}`} onError={(e) => { e.target.src = "/data/guide_images/placeholder.png"; }} />
-                      <p>{p}</p>
-                    </div>
-                  ))}
-                </div>
-                <h2 className="section-title" style={{ marginTop: "40px" }}>The Alphabet</h2>
+                <h2 className="section-title">The Alphabet</h2>
                 <div className="dictionary-grid">
                   {LETTERS.map((l) => (
                     <div key={l} className="dict-card">
-                      <img src={`/data/guide_images/Sign_language_${l}.png`} alt={`Sign ${l}`} />
+                      {/* CRITICAL FIX: The CSS filter invert(1) instantly flips the black PNG lines to white! */}
+                      <img 
+                        src={`/data/guide_images/Sign_language_${l}.svg.png`} 
+                        alt={`Sign ${l}`} 
+                        style={{ filter: "invert(1)" }} 
+                      />
                       <p>{l}</p>
                     </div>
                   ))}
